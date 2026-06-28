@@ -1,0 +1,25 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.streamlit/
+.vscode/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Large downloaded datasets
+data/
+
+# Generated inspection artifacts
+sample_cases/generated/
+
+# Temporary/editor backup files
+*~
+*.swp
+
+# OS files
+.DS_Store
+Thumbs.db

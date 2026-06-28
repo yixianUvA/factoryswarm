@@ -1,0 +1,1 @@
+from core.difference_detector import detect_differences
