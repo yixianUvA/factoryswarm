@@ -1,0 +1,22 @@
+{
+  "name": "PCB central IC discoloration sample",
+  "reference_image": "sample_cases/reference.jpg",
+  "inspection_image": "sample_cases/inspection.jpg",
+  "reference_roi": "sample_cases/generated/reference_roi.jpg",
+  "inspection_roi": "sample_cases/generated/inspection_roi.jpg",
+  "roi_description": "Corresponding central-IC region used as a local inspection aid.",
+  "roi_boxes": {
+    "reference": {
+      "x": 690,
+      "y": 430,
+      "width": 390,
+      "height": 380
+    },
+    "inspection": {
+      "x": 610,
+      "y": 430,
+      "width": 390,
+      "height": 380
+    }
+  }
+}

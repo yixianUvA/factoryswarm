@@ -16,6 +16,7 @@ from core.schemas import (
     Severity,
     SpecialistReport,
 )
+from core.verifier_policy import apply_verifier_policy
 
 from agents.common import build_context_text
 
@@ -84,8 +85,11 @@ def _verifier_messages(
     failed_agents: list[str],
     reference_data_uri: str,
     inspection_data_uri: str,
+    reference_roi_data_uri: str | None,
+    inspection_roi_data_uri: str | None,
     context_text: str,
 ) -> list[dict[str, Any]]:
+    has_roi = reference_roi_data_uri is not None and inspection_roi_data_uri is not None
     payload = {
         "successful_specialist_reports": [
             report.model_dump(mode="json")
@@ -95,22 +99,48 @@ def _verifier_messages(
         "failed_agents": failed_agents,
     }
     user_text = (
-        "Image 1 is the golden reference. Image 2 is the inspected product.\n"
+        "Image 1: complete golden-reference product.\n"
+        "Image 2: complete inspected product.\n"
         "Arbitrate the specialist reports below. Return JSON only.\n\n"
         f"{json.dumps(payload, indent=2)}"
     )
+    if has_roi:
+        user_text = (
+            "Image 1: complete golden-reference product.\n"
+            "Image 2: complete inspected product.\n"
+            "Image 3: golden-reference crop of the suspicious region.\n"
+            "Image 4: corresponding inspection crop of the same physical region.\n"
+            "Use full images for global layout context and crops for local evidence. "
+            "ROI localization is an inspection aid, not proof of a defect.\n\n"
+            f"{json.dumps(payload, indent=2)}"
+        )
     if context_text:
         user_text += f"\n\n{context_text}"
+    content: list[dict[str, Any]] = [
+        {"type": "text", "text": user_text},
+        {"type": "text", "text": "Image 1: complete golden-reference product."},
+        {"type": "image_url", "image_url": {"url": reference_data_uri}},
+        {"type": "text", "text": "Image 2: complete inspected product."},
+        {"type": "image_url", "image_url": {"url": inspection_data_uri}},
+    ]
+    if has_roi:
+        content.extend(
+            [
+                {
+                    "type": "text",
+                    "text": "Image 3: golden-reference crop of the suspicious region.",
+                },
+                {"type": "image_url", "image_url": {"url": reference_roi_data_uri}},
+                {
+                    "type": "text",
+                    "text": "Image 4: corresponding inspection crop of the same physical region.",
+                },
+                {"type": "image_url", "image_url": {"url": inspection_roi_data_uri}},
+            ]
+        )
     return [
         {"role": "system", "content": prompt},
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": user_text},
-                {"type": "image_url", "image_url": {"url": reference_data_uri}},
-                {"type": "image_url", "image_url": {"url": inspection_data_uri}},
-            ],
-        },
+        {"role": "user", "content": content},
     ]
 
 
@@ -120,6 +150,8 @@ async def run(
     failed_agents: list[str],
     reference_data_uri: str,
     inspection_data_uri: str,
+    reference_roi_data_uri: str | None = None,
+    inspection_roi_data_uri: str | None = None,
     asset_type: str | None = None,
     inspection_stage: str | None = None,
     reported_symptom: str | None = None,
@@ -133,6 +165,8 @@ async def run(
             failed_agents,
             reference_data_uri,
             inspection_data_uri,
+            reference_roi_data_uri,
+            inspection_roi_data_uri,
             context_text,
         ),
         response_model=FinalInspectionReport,
@@ -187,6 +221,24 @@ async def run(
                 total_latency,
                 True,
             )
-        return report, total_latency, False
+        return (
+            apply_verifier_policy(
+                report,
+                reports,
+                has_corresponding_roi=reference_roi_data_uri is not None
+                and inspection_roi_data_uri is not None,
+            ),
+            total_latency,
+            False,
+        )
 
-    return report, result.latency_seconds, False
+    return (
+        apply_verifier_policy(
+            report,
+            reports,
+            has_corresponding_roi=reference_roi_data_uri is not None
+            and inspection_roi_data_uri is not None,
+        ),
+        result.latency_seconds,
+        False,
+    )

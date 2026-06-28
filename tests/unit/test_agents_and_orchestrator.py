@@ -4,6 +4,7 @@ import json
 import pytest
 
 from agents import visual
+from agents.common import _specialist_messages
 from core.cerebras_client import CerebrasCallResult
 from core.image_utils import validate_image_bytes
 from core.orchestrator import run_inspection_workflow
@@ -140,3 +141,24 @@ def test_orchestrator_tolerates_one_failed_specialist() -> None:
     assert result.final_report.decision == InspectionDecision.MANUAL_REVIEW
     assert result.timing.failed_request_count == 1
     assert client.calls == 5
+
+
+def test_specialist_messages_include_four_labeled_images_with_roi() -> None:
+    messages = _specialist_messages(
+        prompt="Prompt",
+        reference_data_uri="data:image/png;base64,ref",
+        inspection_data_uri="data:image/png;base64,ins",
+        reference_roi_data_uri="data:image/png;base64,refroi",
+        inspection_roi_data_uri="data:image/png;base64,insroi",
+        context_text="",
+    )
+
+    content = messages[1]["content"]
+    text = "\n".join(item["text"] for item in content if item["type"] == "text")
+    image_urls = [item["image_url"]["url"] for item in content if item["type"] == "image_url"]
+
+    assert len(image_urls) == 4
+    assert "Image 1: complete golden-reference product." in text
+    assert "Image 2: complete inspected product." in text
+    assert "Image 3: golden-reference crop of the suspicious region." in text
+    assert "Image 4: corresponding inspection crop of the same physical region." in text

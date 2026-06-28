@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
+from typing import Any
 
 import streamlit as st
 
 from core.config import ConfigError, PROJECT_ROOT, load_config
 from core.image_utils import (
     ImageValidationError,
+    build_inspection_image_set,
     create_mask_overlay,
     load_image_from_path,
     validate_uploaded_image,
 )
 from core.orchestrator import WorkflowResult, run_inspection_workflow
+from core.sample_cases import load_builtin_pcb_sample
 from core.schemas import InspectionDecision, ReportStatus
 
 
@@ -41,6 +43,26 @@ def run_async(coro):
 
 def decision_label(decision: InspectionDecision) -> str:
     return decision.value.replace("_", " ").upper()
+
+
+def display_items(items: list[Any] | tuple[Any, ...] | None) -> list[str]:
+    if not items:
+        return ["None reported."]
+    rendered: list[str] = []
+    for item in items:
+        if hasattr(item, "finding") and hasattr(item, "evidence"):
+            region = getattr(item, "region", None)
+            region_text = f" ({region})" if region else ""
+            rendered.append(f"{item.finding}{region_text}: {item.evidence}")
+        else:
+            rendered.append(str(item))
+    return rendered
+
+
+def render_bullet_list(title: str, items: list[Any] | tuple[Any, ...] | None) -> None:
+    st.markdown(f"**{title}**")
+    for item in display_items(items):
+        st.markdown(f"- {item}")
 
 
 def render_status_cards(statuses: dict[str, str]) -> None:
@@ -82,17 +104,15 @@ def render_final_report(result: WorkflowResult) -> None:
 
     col_a, col_b = st.columns(2)
     with col_a:
-        st.markdown("**Confirmed Observations**")
-        st.write(report.confirmed_observations or ["No confirmed observations reported."])
-        st.markdown("**Hypotheses**")
-        st.write(report.hypotheses or ["No hypotheses reported."])
-        st.markdown("**Contradictions**")
-        st.write(report.contradictions or ["No contradictions reported."])
+        render_bullet_list("Confirmed Observations", report.confirmed_observations)
+        render_bullet_list("Hypotheses", report.hypotheses)
+        render_bullet_list("Contradictions", report.contradictions)
+        render_bullet_list("Unsupported Claims Removed", report.unsupported_claims_removed)
     with col_b:
-        st.markdown("**Immediate Actions**")
-        st.write(report.immediate_actions or ["No immediate actions reported."])
-        st.markdown("**Follow-Up Actions**")
-        st.write(report.follow_up_actions or ["No follow-up actions reported."])
+        render_bullet_list("Immediate Actions", report.immediate_actions)
+        render_bullet_list("Follow-Up Actions", report.follow_up_actions)
+        render_bullet_list("Missing Evidence", report.additional_evidence_required)
+        render_bullet_list("Confidence-Cap Explanations", report.policy_notes)
         st.markdown("**Human Review**")
         st.write("Required" if report.human_review_required else "Not required by report")
 
@@ -132,9 +152,9 @@ def render_specialist_reports(result: WorkflowResult) -> None:
                 st.write(report.summary)
                 st.write(f"Decision: {decision_label(report.decision)}")
                 st.write(f"Confidence: {report.overall_confidence:.0%}")
-                st.write(report.findings or "No findings returned.")
+                render_bullet_list("Findings", report.findings)
                 if report.limitations:
-                    st.write("Limitations:", report.limitations)
+                    render_bullet_list("Limitations", report.limitations)
 
 
 def main() -> None:
@@ -183,6 +203,8 @@ def main() -> None:
         "result": None,
         "reference_image": None,
         "inspection_image": None,
+        "reference_roi_image": None,
+        "inspection_roi_image": None,
         "mask_image": None,
         "use_sample": False,
         "show_mask": False,
@@ -222,6 +244,7 @@ def main() -> None:
     )
 
     try:
+        sample_loaded = False
         if reference_upload is not None:
             st.session_state.reference_image = validate_uploaded_image(
                 reference_upload,
@@ -229,12 +252,15 @@ def main() -> None:
                 display_config.max_upload_bytes,
             )
             st.session_state.use_sample = False
+            st.session_state.reference_roi_image = None
+            st.session_state.inspection_roi_image = None
         elif st.session_state.use_sample:
-            st.session_state.reference_image = load_image_from_path(
-                SAMPLE_REFERENCE,
-                "Reference",
-                display_config.max_upload_bytes,
-            )
+            sample = load_builtin_pcb_sample(display_config.max_upload_bytes)
+            st.session_state.reference_image = sample.image_set.reference
+            st.session_state.inspection_image = sample.image_set.inspection
+            st.session_state.reference_roi_image = sample.image_set.reference_roi
+            st.session_state.inspection_roi_image = sample.image_set.inspection_roi
+            sample_loaded = True
 
         if inspection_upload is not None:
             st.session_state.inspection_image = validate_uploaded_image(
@@ -243,11 +269,62 @@ def main() -> None:
                 display_config.max_upload_bytes,
             )
             st.session_state.use_sample = False
-        elif st.session_state.use_sample:
+            st.session_state.reference_roi_image = None
+            st.session_state.inspection_roi_image = None
+        elif st.session_state.use_sample and not sample_loaded:
             st.session_state.inspection_image = load_image_from_path(
                 SAMPLE_INSPECTION,
                 "Inspection",
                 display_config.max_upload_bytes,
+            )
+
+        with st.expander("Optional corresponding ROI crops", expanded=False):
+            st.caption(
+                "Provide both crops together. They must show corresponding local regions; masks remain separate evaluation metadata."
+            )
+            roi_ref_col, roi_ins_col = st.columns(2)
+            with roi_ref_col:
+                reference_roi_upload = st.file_uploader(
+                    "Golden-reference ROI crop",
+                    type=["jpg", "jpeg", "png"],
+                    key="reference_roi_upload",
+                )
+            with roi_ins_col:
+                inspection_roi_upload = st.file_uploader(
+                    "Inspection ROI crop",
+                    type=["jpg", "jpeg", "png"],
+                    key="inspection_roi_upload",
+                )
+
+        if reference_roi_upload is not None:
+            st.session_state.reference_roi_image = validate_uploaded_image(
+                reference_roi_upload,
+                "Reference ROI",
+                display_config.max_upload_bytes,
+            )
+            st.session_state.use_sample = False
+        elif not st.session_state.use_sample:
+            st.session_state.reference_roi_image = None
+
+        if inspection_roi_upload is not None:
+            st.session_state.inspection_roi_image = validate_uploaded_image(
+                inspection_roi_upload,
+                "Inspection ROI",
+                display_config.max_upload_bytes,
+            )
+            st.session_state.use_sample = False
+        elif not st.session_state.use_sample:
+            st.session_state.inspection_roi_image = None
+
+        if reference_roi_upload is not None or inspection_roi_upload is not None:
+            st.session_state.use_sample = False
+
+        if st.session_state.reference_image and st.session_state.inspection_image:
+            build_inspection_image_set(
+                st.session_state.reference_image,
+                st.session_state.inspection_image,
+                st.session_state.reference_roi_image,
+                st.session_state.inspection_roi_image,
             )
 
         if mask_upload is not None:
@@ -278,6 +355,23 @@ def main() -> None:
             with st.expander("Classical difference overlay", expanded=False):
                 st.image(str(SAMPLE_OVERLAY), caption="Alignment and lighting can create artifacts.")
 
+    if st.session_state.reference_roi_image and st.session_state.inspection_roi_image:
+        st.subheader("Corresponding ROI Crops")
+        st.caption(
+            "These crops show corresponding local regions. They provide local evidence while the full images provide global layout context."
+        )
+        roi_col_a, roi_col_b = st.columns(2)
+        roi_col_a.image(
+            st.session_state.reference_roi_image.image,
+            caption="Image 3: Golden Reference ROI",
+            use_container_width=True,
+        )
+        roi_col_b.image(
+            st.session_state.inspection_roi_image.image,
+            caption="Image 4: Inspection ROI",
+            use_container_width=True,
+        )
+
     st.subheader("Agent Execution")
     status_placeholder = st.empty()
     with status_placeholder.container():
@@ -303,11 +397,13 @@ def main() -> None:
             with st.spinner("Specialists running concurrently, then verifier arbitrating..."):
                 st.session_state.result = run_async(
                     run_inspection_workflow(
-                        st.session_state.reference_image,
-                        st.session_state.inspection_image,
-                        asset_type or None,
-                        inspection_stage or None,
-                        reported_symptom or None,
+                        reference_image=st.session_state.reference_image,
+                        inspection_image=st.session_state.inspection_image,
+                        reference_roi_image=st.session_state.reference_roi_image,
+                        inspection_roi_image=st.session_state.inspection_roi_image,
+                        asset_type=asset_type or None,
+                        inspection_stage=inspection_stage or None,
+                        reported_symptom=reported_symptom or None,
                     )
                 )
         except (ConfigError, ImageValidationError) as exc:

@@ -24,18 +24,22 @@ async def _run_agent_safely(
     client: CerebrasClient,
     reference_data_uri: str,
     inspection_data_uri: str,
+    reference_roi_data_uri: str | None,
+    inspection_roi_data_uri: str | None,
     asset_type: str | None,
     inspection_stage: str | None,
     reported_symptom: str | None,
 ) -> SpecialistReport:
     try:
         return await runner(
-            client,
-            reference_data_uri,
-            inspection_data_uri,
-            asset_type,
-            inspection_stage,
-            reported_symptom,
+            client=client,
+            reference_data_uri=reference_data_uri,
+            inspection_data_uri=inspection_data_uri,
+            reference_roi_data_uri=reference_roi_data_uri,
+            inspection_roi_data_uri=inspection_roi_data_uri,
+            asset_type=asset_type,
+            inspection_stage=inspection_stage,
+            reported_symptom=reported_symptom,
         )
     except asyncio.CancelledError:
         raise
@@ -51,6 +55,8 @@ async def _run_agent_safely(
 async def run_inspection_workflow(
     reference_image: ValidatedImage,
     inspection_image: ValidatedImage,
+    reference_roi_image: ValidatedImage | None = None,
+    inspection_roi_image: ValidatedImage | None = None,
     asset_type: str | None = None,
     inspection_stage: str | None = None,
     reported_symptom: str | None = None,
@@ -58,6 +64,16 @@ async def run_inspection_workflow(
 ) -> WorkflowResult:
     workflow_start = time.perf_counter()
     active_client = client or get_cerebras_client()
+    if (reference_roi_image is None) != (inspection_roi_image is None):
+        raise ValueError(
+            "Reference ROI and inspection ROI must be provided together as corresponding crops."
+        )
+    reference_roi_data_uri = (
+        reference_roi_image.data_uri if reference_roi_image is not None else None
+    )
+    inspection_roi_data_uri = (
+        inspection_roi_image.data_uri if inspection_roi_image is not None else None
+    )
 
     specialist_runners = [
         visual.run,
@@ -74,6 +90,8 @@ async def run_inspection_workflow(
                 active_client,
                 reference_image.data_uri,
                 inspection_image.data_uri,
+                reference_roi_data_uri,
+                inspection_roi_data_uri,
                 asset_type,
                 inspection_stage,
                 reported_symptom,
@@ -109,6 +127,8 @@ async def run_inspection_workflow(
         failed_agents,
         reference_image.data_uri,
         inspection_image.data_uri,
+        reference_roi_data_uri,
+        inspection_roi_data_uri,
         asset_type,
         inspection_stage,
         reported_symptom,

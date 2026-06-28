@@ -5,9 +5,11 @@ from PIL import Image
 
 from core.image_utils import (
     ImageValidationError,
+    build_inspection_image_set,
     create_mask_overlay,
     validate_image_bytes,
 )
+from core.sample_cases import load_builtin_pcb_sample
 
 
 def image_bytes(fmt: str = "PNG", size: tuple[int, int] = (16, 12)) -> bytes:
@@ -70,3 +72,52 @@ def test_mask_overlay_requires_matching_dimensions() -> None:
 
     with pytest.raises(ImageValidationError):
         create_mask_overlay(inspection, mask)
+
+
+def test_paired_roi_validation_requires_both_images() -> None:
+    reference = validate_image_bytes(
+        image_bytes("PNG"),
+        filename="reference.png",
+        label="Reference",
+        max_bytes=100_000,
+        declared_mime_type="image/png",
+    )
+    inspection = validate_image_bytes(
+        image_bytes("PNG"),
+        filename="inspection.png",
+        label="Inspection",
+        max_bytes=100_000,
+        declared_mime_type="image/png",
+    )
+    roi = validate_image_bytes(
+        image_bytes("PNG"),
+        filename="roi.png",
+        label="ROI",
+        max_bytes=100_000,
+        declared_mime_type="image/png",
+    )
+
+    with pytest.raises(ImageValidationError):
+        build_inspection_image_set(reference, inspection, reference_roi=roi)
+    with pytest.raises(ImageValidationError):
+        build_inspection_image_set(reference, inspection, inspection_roi=roi)
+
+    image_set = build_inspection_image_set(
+        reference,
+        inspection,
+        reference_roi=roi,
+        inspection_roi=roi,
+    )
+    assert image_set.has_roi_pair
+
+
+def test_builtin_pcb_sample_loads_corresponding_roi_pair() -> None:
+    sample = load_builtin_pcb_sample(max_bytes=1_000_000)
+
+    assert sample.image_set.reference.width == 1358
+    assert sample.image_set.inspection.width == 1358
+    assert sample.image_set.has_roi_pair
+    assert sample.image_set.reference_roi is not None
+    assert sample.image_set.inspection_roi is not None
+    assert sample.image_set.reference_roi.width == sample.image_set.inspection_roi.width
+    assert sample.image_set.reference_roi.height == sample.image_set.inspection_roi.height

@@ -30,6 +30,18 @@ class ValidatedImage:
     data_uri: str
 
 
+@dataclass(frozen=True)
+class InspectionImageSet:
+    reference: ValidatedImage
+    inspection: ValidatedImage
+    reference_roi: ValidatedImage | None = None
+    inspection_roi: ValidatedImage | None = None
+
+    @property
+    def has_roi_pair(self) -> bool:
+        return self.reference_roi is not None and self.inspection_roi is not None
+
+
 def _mime_from_name(filename: str) -> str | None:
     mime_type, _ = mimetypes.guess_type(filename)
     return mime_type
@@ -122,6 +134,38 @@ def load_image_from_path(path: Path, label: str, max_bytes: int) -> ValidatedIma
     )
 
 
+def crop_validated_image(
+    source: ValidatedImage,
+    box: dict[str, int],
+    label: str,
+    filename: str,
+) -> ValidatedImage:
+    required = {"x", "y", "width", "height"}
+    if set(box) != required:
+        raise ImageValidationError(f"{label} crop box must contain x, y, width, and height.")
+    x = box["x"]
+    y = box["y"]
+    width = box["width"]
+    height = box["height"]
+    if x < 0 or y < 0 or width <= 0 or height <= 0:
+        raise ImageValidationError(f"{label} crop box must have positive dimensions.")
+    if x + width > source.width or y + height > source.height:
+        raise ImageValidationError(f"{label} crop box extends outside the source image.")
+
+    crop = source.image.crop((x, y, x + width, y + height)).convert("RGB")
+    encoded = _encode_image(crop, source.mime_type)
+    return ValidatedImage(
+        label=label,
+        filename=filename,
+        mime_type=source.mime_type,
+        size_bytes=len(encoded),
+        width=crop.width,
+        height=crop.height,
+        image=crop,
+        data_uri=_to_data_uri(encoded, source.mime_type),
+    )
+
+
 def validate_uploaded_image(uploaded_file, label: str, max_bytes: int) -> ValidatedImage:
     return validate_image_bytes(
         data=uploaded_file.getvalue(),
@@ -129,6 +173,24 @@ def validate_uploaded_image(uploaded_file, label: str, max_bytes: int) -> Valida
         label=label,
         max_bytes=max_bytes,
         declared_mime_type=getattr(uploaded_file, "type", None),
+    )
+
+
+def build_inspection_image_set(
+    reference: ValidatedImage,
+    inspection: ValidatedImage,
+    reference_roi: ValidatedImage | None = None,
+    inspection_roi: ValidatedImage | None = None,
+) -> InspectionImageSet:
+    if (reference_roi is None) != (inspection_roi is None):
+        raise ImageValidationError(
+            "Reference ROI and inspection ROI must be provided together as corresponding crops."
+        )
+    return InspectionImageSet(
+        reference=reference,
+        inspection=inspection,
+        reference_roi=reference_roi,
+        inspection_roi=inspection_roi,
     )
 
 

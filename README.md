@@ -1,6 +1,6 @@
 # FactorySwarm
 
-FactorySwarm is a Streamlit-based multimodal, multi-agent manufacturing inspection MVP powered by Gemma 4 31B on Cerebras. It compares a known-good golden-reference image with an inspected product image, optional factory context, and optional dataset annotation metadata.
+FactorySwarm is a Streamlit-based multimodal, multi-agent manufacturing inspection MVP powered by Gemma 4 31B on Cerebras. It compares a known-good golden-reference image with an inspected product image, optional corresponding ROI crops, optional factory context, and optional dataset annotation metadata.
 
 The product claim: Cerebras makes consulting multiple specialist visual-inspection agents fast enough for an interactive industrial workflow.
 
@@ -55,7 +55,7 @@ Do not commit `.env`.
 conda run -n factoryswarm streamlit run app.py
 ```
 
-Use **Load Sample Case** for `sample_cases/reference.jpg` and `sample_cases/inspection.jpg`, or upload JPEG/PNG images. Optional annotation masks are not sent to agents and are only shown after **Reveal Dataset Annotation**.
+Use **Load Sample Case** for `sample_cases/reference.jpg` and `sample_cases/inspection.jpg`; the sample config also defines corresponding central-IC ROI crops used as local visual evidence. You may upload JPEG/PNG full images and optional paired ROI crops. Optional annotation masks are not sent to agents and are only shown after **Reveal Dataset Annotation**.
 
 ## Tests
 
@@ -82,6 +82,10 @@ conda run -n factoryswarm python tests/difference_smoke_test.py
 
 Prompts request concise JSON. The Cerebras SDK is called through `core/cerebras_client.py` with JSON-schema response format when enabled. Every specialist report and final report is validated with Pydantic. Malformed JSON gets one repair attempt; repeated failure becomes a structured agent failure.
 
+## Grounding Safeguards
+
+FactorySwarm labels every multimodal image explicitly. With ROI crops, Image 1 and Image 2 remain the complete reference and inspection images, while Image 3 and Image 4 are corresponding local crops. A deterministic verifier policy layer then filters unsupported claims, caps confidence for ambiguous evidence, records policy notes, and prevents repeated unsupported claims from becoming confirmed observations by majority vote.
+
 ## Failure Handling
 
 - Missing API key, corrupt images, unsupported MIME types, and oversized uploads produce safe user-facing errors.
@@ -89,6 +93,7 @@ Prompts request concise JSON. The Cerebras SDK is called through `core/cerebras_
 - The verifier receives valid reports plus a failure summary.
 - Verifier failure falls back to a validated manual-review report.
 - Timing metrics include per-agent latency, parallel wall-clock latency, verifier latency, total workflow latency, estimated sequential specialist latency, and calculated speedup.
+- Unsupported BOM, counterfeit, electrical-failure, internal-damage, root-cause, and ambiguous package/component claims are preserved under removed unsupported claims instead of silently discarded.
 
 ## Why Cerebras Speed Matters
 
@@ -101,6 +106,7 @@ Traditional single-agent inspection forces one model response to cover every rol
 - Lighting, focus, alignment, viewpoint, scale, and compression can create false visual differences.
 - OpenCV difference overlays are visual aids, not ground truth.
 - Dataset masks are evaluation metadata, not model evidence by default.
+- ROI crops are inspection aids and not proof of a defect by themselves.
 - The MVP does not control factory equipment or approve unsafe operation.
 
 ## Security

@@ -28,14 +28,29 @@ class StructuredOutputError(ValueError):
 
 
 def _schema_response_format(model: type[BaseModel]) -> dict[str, Any]:
+    schema = _sanitize_json_schema(model.model_json_schema())
     return {
         "type": "json_schema",
         "json_schema": {
             "name": model.__name__,
-            "schema": model.model_json_schema(),
+            "schema": schema,
             "strict": True,
         },
     }
+
+
+def _sanitize_json_schema(value: Any) -> Any:
+    """Remove Pydantic JSON Schema hints unsupported by Cerebras response_format."""
+    unsupported_keywords = {"minLength"}
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_json_schema(item)
+            for key, item in value.items()
+            if key not in unsupported_keywords
+        }
+    if isinstance(value, list):
+        return [_sanitize_json_schema(item) for item in value]
+    return value
 
 
 def sanitize_error(exc: BaseException, api_key: str | None = None) -> str:

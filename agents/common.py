@@ -53,24 +53,51 @@ def _specialist_messages(
     reference_data_uri: str,
     inspection_data_uri: str,
     context_text: str,
+    reference_roi_data_uri: str | None = None,
+    inspection_roi_data_uri: str | None = None,
 ) -> list[dict[str, Any]]:
+    has_roi = reference_roi_data_uri is not None and inspection_roi_data_uri is not None
     user_text = (
-        "Image 1 is the golden reference. Image 2 is the inspected product.\n"
-        "Analyze only visible evidence in these images. Return JSON only.\n"
+        "Image 1: complete golden-reference product.\n"
+        "Image 2: complete inspected product.\n"
     )
+    if has_roi:
+        user_text += (
+            "Image 3: golden-reference crop of the suspicious region.\n"
+            "Image 4: corresponding inspection crop of the same physical region.\n"
+            "Use the complete images for global layout context and the crops for local evidence. "
+            "ROI localization is an inspection aid, not proof of a defect.\n"
+        )
+    user_text += "Analyze only visible evidence in these images. Return JSON only.\n"
     if context_text:
         user_text += f"\n{context_text}\n"
 
+    content: list[dict[str, Any]] = [
+        {"type": "text", "text": user_text},
+        {"type": "text", "text": "Image 1: complete golden-reference product."},
+        {"type": "image_url", "image_url": {"url": reference_data_uri}},
+        {"type": "text", "text": "Image 2: complete inspected product."},
+        {"type": "image_url", "image_url": {"url": inspection_data_uri}},
+    ]
+    if has_roi:
+        content.extend(
+            [
+                {
+                    "type": "text",
+                    "text": "Image 3: golden-reference crop of the suspicious region.",
+                },
+                {"type": "image_url", "image_url": {"url": reference_roi_data_uri}},
+                {
+                    "type": "text",
+                    "text": "Image 4: corresponding inspection crop of the same physical region.",
+                },
+                {"type": "image_url", "image_url": {"url": inspection_roi_data_uri}},
+            ]
+        )
+
     return [
         {"role": "system", "content": prompt},
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": user_text},
-                {"type": "image_url", "image_url": {"url": reference_data_uri}},
-                {"type": "image_url", "image_url": {"url": inspection_data_uri}},
-            ],
-        },
+        {"role": "user", "content": content},
     ]
 
 
@@ -110,6 +137,8 @@ async def run_specialist(
     prompt_name: str,
     reference_data_uri: str,
     inspection_data_uri: str,
+    reference_roi_data_uri: str | None = None,
+    inspection_roi_data_uri: str | None = None,
     asset_type: str | None = None,
     inspection_stage: str | None = None,
     reported_symptom: str | None = None,
@@ -122,6 +151,8 @@ async def run_specialist(
             reference_data_uri,
             inspection_data_uri,
             context_text,
+            reference_roi_data_uri,
+            inspection_roi_data_uri,
         ),
         response_model=SpecialistReport,
     )

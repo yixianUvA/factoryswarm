@@ -70,6 +70,7 @@ class FinalInspectionReport(StrictModel):
     decision_rationale: str = Field(min_length=1)
     successful_agents: list[str] = Field(default_factory=list)
     failed_agents: list[str] = Field(default_factory=list)
+    policy_notes: list[str] = Field(default_factory=list)
 
 
 class TimingMetrics(StrictModel):
