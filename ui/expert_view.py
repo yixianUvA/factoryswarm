@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 
 import streamlit as st
+from dotenv import load_dotenv
 
 from core.config import ConfigError, PROJECT_ROOT, load_config
 from core.image_utils import (
@@ -183,9 +184,40 @@ def render_expert_view() -> None:
     )
 
     st.title("FactorySwarm")
-    st.caption(
-        "Multimodal specialist agents for fast manufacturing inspection on Cerebras."
+
+    # Provider selector — loads the matching .env.<provider> file before config is read.
+    _PROVIDER_OPTIONS = ["cerebras", "google"]
+    _PROVIDER_LABELS = {"cerebras": "Cerebras · gemma-4-31b", "google": "Google AI · gemma-4-31b-it"}
+    st.session_state.setdefault("active_provider", "cerebras")
+
+    selected_provider = st.radio(
+        "AI provider",
+        options=_PROVIDER_OPTIONS,
+        format_func=lambda p: _PROVIDER_LABELS[p],
+        index=_PROVIDER_OPTIONS.index(st.session_state.active_provider),
+        horizontal=True,
+        label_visibility="collapsed",
     )
+    if selected_provider != st.session_state.active_provider:
+        st.session_state.active_provider = selected_provider
+        st.session_state.result = None
+        reset_client()
+
+    _provider_env = PROJECT_ROOT / f".env.{selected_provider}"
+    if _provider_env.exists():
+        load_dotenv(_provider_env, override=True)
+
+    try:
+        display_config = load_config(require_api_key=False)
+    except ConfigError as exc:
+        st.error(str(exc))
+        return
+
+    st.caption(
+        f"Multimodal specialist agents for fast manufacturing inspection — "
+        f"provider: **{display_config.provider}** · model: **{display_config.model}**"
+    )
+
     st.markdown(
         '<div class="notice">Decision support only - human verification required. '
         "Visual inspection cannot establish electrical functionality.</div>",

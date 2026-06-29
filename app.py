@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from core.cerebras_client import reset_client
 from ui.expert_view import (
     decision_label,
     display_items,

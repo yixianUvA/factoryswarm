@@ -82,10 +82,11 @@ async def run_inspection_workflow(
         actions.run,
     ]
 
-    parallel_start = time.perf_counter()
-    gathered = await asyncio.gather(
-        *[
-            _run_agent_safely(
+    semaphore = asyncio.Semaphore(max(1, active_client.config.max_concurrent_calls))
+
+    async def _limited(runner):
+        async with semaphore:
+            return await _run_agent_safely(
                 runner,
                 active_client,
                 reference_image.data_uri,
@@ -96,8 +97,10 @@ async def run_inspection_workflow(
                 inspection_stage,
                 reported_symptom,
             )
-            for runner in specialist_runners
-        ],
+
+    parallel_start = time.perf_counter()
+    gathered = await asyncio.gather(
+        *[_limited(runner) for runner in specialist_runners],
         return_exceptions=True,
     )
     parallel_latency = time.perf_counter() - parallel_start

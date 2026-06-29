@@ -11,6 +11,31 @@ from core.cerebras_client import (
 from core.prompt_loader import load_prompt
 from core.schemas import InspectionDecision, ReportStatus, SpecialistReport
 
+# Appended to the system prompt when the provider does not enforce a strict JSON schema
+# server-side (use_json_schema=False). Makes the required field names explicit so the
+# model cannot substitute its own naming conventions.
+_SPECIALIST_JSON_HINT = """
+Output a JSON object with EXACTLY these field names — no other keys are permitted:
+{
+  "agent_name": "string",
+  "summary": "string",
+  "findings": [
+    {
+      "finding": "string — what was observed",
+      "evidence": "string — visible evidence",
+      "classification": "observation OR hypothesis",
+      "confidence": 0.0,
+      "uncertainty": "string — what reduces confidence",
+      "region": "string OR null"
+    }
+  ],
+  "recommendation": "string",
+  "decision": "pass OR manual_review OR rework OR reject",
+  "overall_confidence": 0.0,
+  "limitations": [],
+  "status": "completed"
+}"""
+
 
 def build_context_text(
     asset_type: str | None = None,
@@ -114,6 +139,7 @@ async def _repair_specialist_response(
                 "content": (
                     "You repair JSON for a manufacturing inspection report. "
                     "Return one valid JSON object only. Do not add markdown."
+                    + (_SPECIALIST_JSON_HINT if not client.config.use_json_schema else "")
                 ),
             },
             {
@@ -144,6 +170,8 @@ async def run_specialist(
     reported_symptom: str | None = None,
 ) -> SpecialistReport:
     prompt = load_prompt(prompt_name)
+    if not client.config.use_json_schema:
+        prompt = prompt + _SPECIALIST_JSON_HINT
     context_text = build_context_text(asset_type, inspection_stage, reported_symptom)
     result = await client.chat_completion(
         messages=_specialist_messages(
@@ -183,7 +211,7 @@ async def run_specialist(
         except StructuredOutputError as repair_exc:
             return specialist_failure_report(
                 agent_name,
-                f"Response did not validate after one repair attempt: {repair_exc}",
+                f"Response did not validate after one repair attempt: {repair_exc}, repairing: {repair.content}, {result.content}",
                 result.latency_seconds + repair.latency_seconds,
             )
         return report.model_copy(

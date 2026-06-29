@@ -23,6 +23,29 @@ from agents.common import build_context_text
 
 AGENT_NAME = "Verifier"
 
+_VERIFIER_JSON_HINT = """
+Output a JSON object with EXACTLY these field names — no other keys are permitted:
+{
+  "incident_title": "string",
+  "decision": "pass OR manual_review OR rework OR reject",
+  "severity": "none OR low OR medium OR high OR critical",
+  "confirmed_observations": [],
+  "hypotheses": [],
+  "agreements": [],
+  "contradictions": [],
+  "unsupported_claims_removed": [],
+  "immediate_actions": [],
+  "follow_up_actions": [],
+  "responsible_role": "string",
+  "additional_evidence_required": [],
+  "overall_confidence": 0.0,
+  "human_review_required": true,
+  "decision_rationale": "string",
+  "successful_agents": [],
+  "failed_agents": [],
+  "policy_notes": []
+}"""
+
 
 def fallback_final_report(
     reports: list[SpecialistReport],
@@ -157,6 +180,8 @@ async def run(
     reported_symptom: str | None = None,
 ) -> tuple[FinalInspectionReport, float, bool]:
     prompt = load_prompt("verifier")
+    if not client.config.use_json_schema:
+        prompt = prompt + _VERIFIER_JSON_HINT
     context_text = build_context_text(asset_type, inspection_stage, reported_symptom)
     result = await client.chat_completion(
         messages=_verifier_messages(
@@ -184,7 +209,8 @@ async def run(
                     "role": "system",
                     "content": (
                         "You repair JSON for a final inspection report. "
-                        "Return one valid JSON object only."
+                        "Return one valid JSON object only. Do not add markdown."
+                        + (_VERIFIER_JSON_HINT if not client.config.use_json_schema else "")
                     ),
                 },
                 {
