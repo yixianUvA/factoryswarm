@@ -217,6 +217,8 @@ def test_failed_agent_is_visible_in_compact_rows() -> None:
 
 def test_open_expert_view_button_switches_without_session_state_error() -> None:
     app = AppTest.from_file("app.py")
+    app.session_state["operator_mode_initialized"] = True
+    app.session_state["operator_needs_inspection"] = False
     app.run(timeout=10)
 
     open_expert = next(

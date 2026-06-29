@@ -17,7 +17,24 @@ from core.orchestrator import WorkflowResult, run_inspection_workflow
 from core.sample_cases import load_builtin_pcb_sample
 from core.schemas import InspectionDecision, ReportStatus
 from ui.components import workflow_result_json
+from ui.dataset_queue import (
+    cancel_pcb4_pending_autorun,
+    current_pcb4_item,
+    load_next_pcb4_image,
+    pcb4_button_disabled,
+    pcb4_button_label,
+    pcb4_position_text,
+)
 from ui.formatters import decision_label as format_decision_label
+from ui.state import (
+    current_pcb4_fingerprint,
+    finish_pcb4_autorun,
+    mark_result_for_current_images,
+    set_completed_state,
+    set_failed_state,
+    set_running_state,
+    should_run_pcb4_autorun,
+)
 from ui.theme import (
     inject_global_theme,
     render_agent_card,
@@ -183,6 +200,15 @@ def render_expert_view() -> None:
     if st.sidebar.button("Load Sample Case", width="stretch"):
         st.session_state.use_sample = True
         st.session_state.show_mask = False
+        st.session_state.pcb4_current_item = None
+        cancel_pcb4_pending_autorun(st.session_state)
+
+    if st.sidebar.button(
+        pcb4_button_label(st.session_state),
+        disabled=pcb4_button_disabled(st.session_state),
+        width="stretch",
+    ):
+        load_next_pcb4_image(st.session_state, display_config.max_upload_bytes)
 
     st.sidebar.markdown("### REFERENCE CONFIGURATION")
     reference_upload = st.sidebar.file_uploader(
@@ -234,6 +260,8 @@ def render_expert_view() -> None:
             st.session_state.use_sample = False
             st.session_state.reference_roi_image = None
             st.session_state.inspection_roi_image = None
+            st.session_state.pcb4_current_item = None
+            cancel_pcb4_pending_autorun(st.session_state)
         elif st.session_state.use_sample:
             sample = load_builtin_pcb_sample(display_config.max_upload_bytes)
             st.session_state.reference_image = sample.image_set.reference
@@ -251,6 +279,8 @@ def render_expert_view() -> None:
             st.session_state.use_sample = False
             st.session_state.reference_roi_image = None
             st.session_state.inspection_roi_image = None
+            st.session_state.pcb4_current_item = None
+            cancel_pcb4_pending_autorun(st.session_state)
         elif st.session_state.use_sample and not sample_loaded:
             st.session_state.inspection_image = load_image_from_path(
                 SAMPLE_INSPECTION,
@@ -308,6 +338,14 @@ def render_expert_view() -> None:
     st.caption(
         "Decision support only - human verification required. Visual inspection cannot establish electrical functionality."
     )
+    if st.session_state.get("pcb4_queue_error"):
+        st.warning(st.session_state.pcb4_queue_error)
+    else:
+        queue_position = pcb4_position_text(st.session_state)
+        if queue_position:
+            st.caption(queue_position)
+        if st.session_state.get("pcb4_status_message"):
+            st.caption(st.session_state.pcb4_status_message)
 
     result = st.session_state.result
     if result is None:
@@ -456,9 +494,16 @@ def render_expert_view() -> None:
                 }
             )
 
-    if run_clicked:
+    pcb4_autorun_fingerprint = None
+    pcb4_autorun_requested = should_run_pcb4_autorun(st.session_state)
+    if pcb4_autorun_requested:
+        pcb4_autorun_fingerprint = current_pcb4_fingerprint(st.session_state)
+
+    should_run_now = run_clicked or pcb4_autorun_requested
+    if should_run_now:
         try:
             load_config(require_api_key=True)
+            set_running_state(st.session_state)
             running_statuses = {agent: "running" for agent in AGENT_ORDER}
             with status_placeholder.container():
                 render_status_cards(running_statuses)
@@ -474,10 +519,21 @@ def render_expert_view() -> None:
                         reported_symptom=reported_symptom or None,
                     )
                 )
+            set_completed_state(
+                st.session_state,
+                st.session_state.result.final_report.failed_agents,
+            )
+            mark_result_for_current_images(st.session_state)
         except (ConfigError, ImageValidationError) as exc:
+            set_failed_state(st.session_state)
             st.error(str(exc))
         except Exception as exc:
+            set_failed_state(st.session_state)
             st.error(f"Inspection could not complete safely: {exc.__class__.__name__}")
+        finally:
+            if pcb4_autorun_requested:
+                finish_pcb4_autorun(st.session_state, pcb4_autorun_fingerprint)
+        st.rerun()
 
     result = st.session_state.result
     if result is not None:

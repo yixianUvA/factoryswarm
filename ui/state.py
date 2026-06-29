@@ -40,6 +40,25 @@ DEFAULT_STATE: dict[str, Any] = {
     "result_inspection_fingerprint": None,
     "last_auto_run_fingerprint": None,
     "inspection_uploader_version": 0,
+    "pcb4_queue_items": [],
+    "pcb4_queue_index": 0,
+    "pcb4_reference_path": None,
+    "pcb4_current_item": None,
+    "pcb4_queue_initialized": False,
+    "pcb4_first_manual_run_completed": False,
+    "pcb4_pending_autorun": False,
+    "pcb4_autorun_in_progress": False,
+    "pcb4_last_autorun_fingerprint": None,
+    "pcb4_queue_complete": False,
+    "pcb4_queue_error": None,
+    "pcb4_status_message": None,
+    "operator_mode_initialized": False,
+    "operator_current_image_index": 0,
+    "operator_current_image_path": None,
+    "operator_needs_inspection": False,
+    "operator_inspection_in_progress": False,
+    "operator_inspected_image_id": None,
+    "operator_error": None,
 }
 
 
@@ -96,6 +115,7 @@ def clear_result_state(state: MutableMapping[str, Any]) -> None:
     state["agent_statuses"] = DEFAULT_AGENT_STATUSES.copy()
     state["result_reference_fingerprint"] = None
     state["result_inspection_fingerprint"] = None
+    state["operator_error"] = None
 
 
 def set_running_state(state: MutableMapping[str, Any]) -> None:
@@ -117,16 +137,19 @@ def set_completed_state(state: MutableMapping[str, Any], failed_agents: list[str
     state["agent_statuses"] = statuses
     state["inspection_status"] = "partial success" if failed else "completed"
     state["inspection_running"] = False
+    state["operator_inspection_in_progress"] = False
     mark_result_for_current_images(state)
 
 
 def set_failed_state(state: MutableMapping[str, Any]) -> None:
     state["inspection_status"] = "failed"
     state["inspection_running"] = False
+    state["operator_inspection_in_progress"] = False
     state["agent_statuses"] = {
         agent_name: "failed" if agent_name == "Final Verification" else "partial success"
         for agent_name in DEFAULT_AGENT_STATUSES
     }
+    state["pcb4_autorun_in_progress"] = False
 
 
 def next_item(state: MutableMapping[str, Any], keep_reference: bool = True) -> None:
@@ -166,3 +189,36 @@ def should_auto_run(state: MutableMapping[str, Any]) -> bool:
         return False
     state["last_auto_run_fingerprint"] = pair_fingerprint
     return True
+
+
+def current_pcb4_fingerprint(state: MutableMapping[str, Any]) -> str | None:
+    return image_pair_fingerprint(
+        state.get("reference_image"),
+        state.get("inspection_image"),
+    )
+
+
+def should_run_pcb4_autorun(state: MutableMapping[str, Any]) -> bool:
+    if not state.get("pcb4_first_manual_run_completed"):
+        return False
+    if not state.get("pcb4_pending_autorun"):
+        return False
+    if state.get("inspection_running") or state.get("pcb4_autorun_in_progress"):
+        return False
+    fingerprint = current_pcb4_fingerprint(state)
+    if fingerprint is None:
+        return False
+    if state.get("pcb4_last_autorun_fingerprint") == fingerprint:
+        return False
+    state["pcb4_autorun_in_progress"] = True
+    return True
+
+
+def finish_pcb4_autorun(
+    state: MutableMapping[str, Any],
+    processed_fingerprint: str | None,
+) -> None:
+    state["pcb4_pending_autorun"] = False
+    state["pcb4_autorun_in_progress"] = False
+    if processed_fingerprint is not None:
+        state["pcb4_last_autorun_fingerprint"] = processed_fingerprint
