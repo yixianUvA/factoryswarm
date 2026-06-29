@@ -59,28 +59,49 @@ FactorySwarm opens in **Operator Mode** by default. Use the small sidebar interf
 
 Use **Load Sample Case** for `sample_cases/reference.jpg` and `sample_cases/inspection.jpg`; the sample config also defines corresponding central-IC ROI crops used as local visual evidence. You may upload JPEG/PNG full images and optional paired ROI crops. Optional annotation masks are not sent to agents and are only shown after **Reveal Dataset Annotation**.
 
+## Visual System
+
+FactorySwarm uses a shared dark scientific command-center design system across both modes. Theme tokens live in `ui/theme.py` and `.streamlit/config.toml`; reusable rendering helpers keep custom HTML centralized and escape dynamic model/user text before rendering.
+
+Design principles:
+
+- Very dark navy application chrome with elevated panels and thin blue-gray borders.
+- Neon teal/cyan accents for active pipeline state, with amber/orange/red decision colors.
+- Sans-serif text for workflow UI and monospace text for telemetry, timing, model, and console labels.
+- Real timing metrics only; estimated values are labeled as estimates.
+- Accessible status text and icons in addition to color.
+- Progressive disclosure in Operator Mode and higher information density in Expert Mode.
+
 ## Operator Mode
 
-Operator Mode is optimized for high-throughput QA work. The inspected product image is the primary visual, the golden reference stays loaded for batch use, and the result panel emphasizes the decision, confidence, human-review requirement, top warnings, and next action.
+Operator Mode is optimized for high-throughput QA work. The inspected product image is the primary visual inside a dark evidence viewer, the golden reference stays loaded for batch use, and the command panel emphasizes the decision, confidence, human-review requirement, top warnings, and next action.
 
-- **Run Inspection** starts the same four-specialist concurrent workflow used by Expert Mode.
-- **Next Item** clears the previous report, warnings, agent status, mask, and inspection image while preserving the current golden reference for batch inspection.
-- **Automatically inspect after image upload** is off by default and guarded so Streamlit reruns do not repeatedly call the API for the same image pair.
-- Reference, ROI comparison, annotation reveal, detailed findings, specialist reports, and system timing remain available in collapsed sections.
+- Operator Mode automatically loads the first PCB4 dataset image and starts one inspection for that selected image.
+- **Previous PCB Image** and **Next PCB Image** change the selected PCB image, clear image-specific results, and automatically run the inspection once for the new selection.
+- Session-state guards prevent Streamlit reruns from repeatedly calling the API for the same selected image.
+- Reference, ROI comparison, annotation reveal, detailed findings, specialist reports, and system timing remain available in collapsed dark sections.
 - Keyboard shortcuts are documented as a workstation workflow target, but this Streamlit MVP keeps reliable button-first operation.
 
 ## Expert Mode
 
-Expert Mode preserves the detailed original interface for demos, development, and troubleshooting. It continues to show full input controls, side-by-side full images, optional ROI crops, mask reveal, specialist reports, verifier consensus, policy notes, and timing metrics.
+Expert Mode is the dense command-center workspace for demos, development, and troubleshooting. It continues to expose full input controls, side-by-side full images, optional ROI crops, mask reveal, specialist reports, verifier consensus, policy notes, and timing metrics. Inputs are grouped in the sidebar, while the main workspace shows pipeline telemetry, evidence tabs, agent orchestration, an activity console, and final consensus details.
+
+## Dark-Theme Accessibility
+
+- Decision states include text and symbols, not color alone.
+- Body text uses high-contrast navy/white/cyan combinations rather than low-contrast gray.
+- Buttons keep large click targets and visible labels.
+- Motion is restrained and respects reduced-motion preferences through CSS.
+- The layout is designed to wrap on common laptop widths without horizontal page scrolling.
 
 ## Recommended Factory Workflow
 
-1. Load or upload one golden reference for the current batch.
-2. Upload the current inspection image or load the sample case.
-3. Click **Run Inspection**, or enable auto-run for one inspection per new image pair.
+1. Open Operator Mode and let the first PCB sample load and inspect automatically.
+2. Use **Previous PCB Image** and **Next PCB Image** to move through the PCB4 queue.
+3. Wait for the automatic inspection to complete for each selected image.
 4. Act on PASS, MANUAL REVIEW, REWORK, or REJECT.
 5. Open collapsed details only when warnings or partial agent failures require it.
-6. Click **Next Item** to clear stale results and keep the batch reference ready.
+6. Switch to Expert Mode when full evidence controls or report details are needed.
 
 ## Tests
 
@@ -144,9 +165,9 @@ This repository includes VisA-style dataset assets under `data/` with `data/LICE
 
 ## 60-Second Demo Flow
 
-1. Start Streamlit and click **Load Sample Case**.
-2. In Operator Mode, show that the inspection image is prominent and the reference is collapsed.
-3. Click **Run Inspection** and point out the compact specialist status rows.
+1. Start Streamlit and let Operator Mode load the first PCB sample automatically.
+2. Show that the inspection image is prominent and the reference is collapsed.
+3. Point out the automatic four-agent inspection and compact specialist status rows.
 4. Review the decision, confidence, top warnings, and next action.
 5. Open **System details** to highlight estimated sequential latency versus parallel latency.
 6. Switch to **Expert Mode** to show the full report, ROI evidence, policy notes, and optional annotation reveal.

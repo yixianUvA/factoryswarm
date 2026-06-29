@@ -12,6 +12,15 @@ from core.image_utils import (
 )
 from core.orchestrator import WorkflowResult, run_inspection_workflow
 from core.sample_cases import load_builtin_pcb_sample
+from ui.dataset_queue import (
+    cancel_pcb4_pending_autorun,
+    claim_operator_inspection,
+    finish_operator_inspection,
+    initialize_operator_pcb4_workflow,
+    navigate_operator_pcb4,
+    operator_navigation_bounds,
+    pcb4_position_text,
+)
 from ui.components import (
     concise_result_summary,
     most_important_next_action,
@@ -28,14 +37,20 @@ from ui.state import (
     EXPERT_MODE,
     clear_result_state,
     clear_stale_result_if_needed,
+    image_pair_fingerprint,
     initialize_ui_state,
     mark_result_for_current_images,
-    next_item,
     result_matches_current_images,
     set_completed_state,
     set_failed_state,
     set_running_state,
-    should_auto_run,
+)
+from ui.formatters import html_escape
+from ui.theme import (
+    inject_global_theme,
+    render_brand_header,
+    render_panel_header,
+    render_performance_bar,
 )
 
 
@@ -58,11 +73,12 @@ def _run_workflow(
     asset_type: str | None,
     inspection_stage: str | None,
     reported_symptom: str | None,
+    spinner_text: str = "Inspection agents are analyzing this item...",
 ) -> WorkflowResult | None:
     try:
         load_config(require_api_key=True)
         set_running_state(st.session_state)
-        with st.spinner("Inspection agents are analyzing this item..."):
+        with st.spinner(spinner_text):
             result = run_async(
                 run_inspection_workflow(
                     reference_image=st.session_state.reference_image,
@@ -86,53 +102,25 @@ def _run_workflow(
     return None
 
 
+def _mark_current_images_for_inspection(image_id: str) -> None:
+    state = st.session_state
+    if state.reference_image and state.inspection_image:
+        pair_fingerprint = image_pair_fingerprint(
+            state.reference_image,
+            state.inspection_image,
+        )
+        image_key = f"{image_id}:{pair_fingerprint}"
+        if state.get("operator_current_image_path") == image_key:
+            return
+        state.operator_current_image_path = image_key
+        state.operator_needs_inspection = True
+        state.operator_inspection_in_progress = False
+        state.operator_inspected_image_id = None
+        clear_result_state(state)
+
+
 def _render_operator_styles() -> None:
-    st.markdown(
-        """
-        <style>
-        .block-container { padding-top: 1rem; }
-        .operator-header {
-            display: flex; justify-content: space-between; align-items: baseline;
-            border-bottom: 1px solid #d4d4d8; padding-bottom: .55rem; margin-bottom: 1rem;
-        }
-        .operator-title { font-size: 1.55rem; font-weight: 800; color: #111827; }
-        .operator-mode { color: #52525b; font-size: .95rem; }
-        .operator-notice {
-            border-left: 4px solid #b45309; padding: .55rem .75rem;
-            background: #fff7ed; color: #7c2d12; margin-bottom: 1rem;
-        }
-        .inspection-meta {
-            display: flex; gap: .55rem; flex-wrap: wrap; margin: .2rem 0 .7rem;
-        }
-        .inspection-pill {
-            border: 1px solid #d4d4d8; background: #fafafa; border-radius: 6px;
-            padding: .25rem .45rem; color: #3f3f46; font-size: .9rem;
-        }
-        .operator-status {
-            border: 2px solid #d4d4d8; border-radius: 8px; padding: 1rem;
-            min-height: 310px; display: flex; flex-direction: column; gap: .7rem;
-        }
-        .operator-status-title {
-            display: flex; align-items: center; gap: .55rem;
-            font-size: 2rem; font-weight: 900; letter-spacing: 0;
-        }
-        .operator-summary { font-size: 1.08rem; line-height: 1.4; color: #18181b; }
-        .operator-next-action {
-            border-top: 1px solid rgba(0,0,0,.12); padding-top: .7rem;
-            font-weight: 750; color: #18181b;
-        }
-        .operator-meta { color: #3f3f46; font-weight: 650; }
-        .operator-status-ok { background: #dcfce7; color: #14532d; border-color: #16a34a; }
-        .operator-status-review { background: #fef3c7; color: #78350f; border-color: #d97706; }
-        .operator-status-rework { background: #ffedd5; color: #7c2d12; border-color: #ea580c; }
-        .operator-status-reject { background: #fee2e2; color: #7f1d1d; border-color: #dc2626; }
-        .operator-status-running { background: #eff6ff; color: #1e3a8a; border-color: #2563eb; }
-        .operator-status-failed { background: #fecaca; color: #7f1d1d; border-color: #991b1b; }
-        .stButton > button { min-height: 2.6rem; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    inject_global_theme()
 
 
 def _load_sidebar_inputs() -> tuple[str, str, str]:
@@ -140,12 +128,6 @@ def _load_sidebar_inputs() -> tuple[str, str, str]:
     state = st.session_state
 
     st.sidebar.markdown("### Inspection setup")
-    state.auto_run_enabled = st.sidebar.checkbox(
-        "Automatically inspect after image upload",
-        value=state.auto_run_enabled,
-        help="Runs once for each new reference and inspection image pair.",
-    )
-
     if st.sidebar.button("Load Sample Case", width="stretch"):
         sample = load_builtin_pcb_sample(config.max_upload_bytes)
         state.reference_image = sample.image_set.reference
@@ -155,7 +137,10 @@ def _load_sidebar_inputs() -> tuple[str, str, str]:
         state.item_identifier = sample.name
         state.use_sample = True
         state.show_mask = False
-        clear_result_state(state)
+        state.pcb4_current_item = None
+        state.operator_mode_initialized = True
+        cancel_pcb4_pending_autorun(state)
+        _mark_current_images_for_inspection(sample.name)
 
     reference_upload = st.sidebar.file_uploader(
         "Golden reference",
@@ -171,6 +156,10 @@ def _load_sidebar_inputs() -> tuple[str, str, str]:
         state.reference_roi_image = None
         state.inspection_roi_image = None
         state.use_sample = False
+        state.pcb4_current_item = None
+        state.operator_mode_initialized = True
+        cancel_pcb4_pending_autorun(state)
+        _mark_current_images_for_inspection("operator-uploaded-image")
 
     inspection_key = f"operator_inspection_upload_{state.inspection_uploader_version}"
     inspection_upload = st.sidebar.file_uploader(
@@ -188,6 +177,10 @@ def _load_sidebar_inputs() -> tuple[str, str, str]:
         if not state.use_sample:
             state.reference_roi_image = None
         state.use_sample = False
+        state.pcb4_current_item = None
+        state.operator_mode_initialized = True
+        cancel_pcb4_pending_autorun(state)
+        _mark_current_images_for_inspection("operator-uploaded-image")
 
     state.item_identifier = st.sidebar.text_input(
         "Item identifier",
@@ -304,17 +297,18 @@ def _render_reference_expander() -> None:
                     st.warning(str(exc))
 
 
-def _render_actions(can_run: bool) -> tuple[bool, bool, bool]:
+def _render_actions() -> tuple[bool, bool, bool]:
+    previous_disabled, next_disabled = operator_navigation_bounds(st.session_state)
     action_cols = st.columns([1, 1, 1])
-    run_clicked = action_cols[0].button(
-        "Run Inspection",
-        disabled=not can_run,
-        type="primary",
+    previous_clicked = action_cols[0].button(
+        "Previous PCB Image",
+        disabled=previous_disabled,
         width="stretch",
     )
     next_clicked = action_cols[1].button(
-        "Next Item",
-        disabled=st.session_state.inspection_running,
+        "Next PCB Image",
+        disabled=next_disabled,
+        type="primary",
         width="stretch",
     )
     review_clicked = action_cols[2].button(
@@ -325,39 +319,71 @@ def _render_actions(can_run: bool) -> tuple[bool, bool, bool]:
     if st.button("Open Expert View", width="stretch"):
         st.session_state.pending_ui_mode = EXPERT_MODE
         st.rerun()
-    return run_clicked, next_clicked, review_clicked
+    return previous_clicked, next_clicked, review_clicked
+
+
+def _run_operator_inspection_if_needed(
+    asset_type: str | None,
+    inspection_stage: str | None,
+    reported_symptom: str | None,
+) -> None:
+    image_id = claim_operator_inspection(st.session_state)
+    if image_id is None:
+        return
+    result = _run_workflow(
+        asset_type,
+        inspection_stage,
+        reported_symptom,
+        spinner_text="Inspecting PCB image...",
+    )
+    finish_operator_inspection(
+        st.session_state,
+        image_id,
+        completed=result is not None,
+    )
+    mark_result_for_current_images(st.session_state)
+    st.rerun()
 
 
 def render_operator_view() -> None:
     initialize_ui_state(st.session_state)
     _render_operator_styles()
-
-    st.markdown(
-        """
-        <div class="operator-header">
-            <div class="operator-title">FactorySwarm</div>
-            <div class="operator-mode">Operator Mode</div>
-        </div>
-        <div class="operator-notice">
-            Decision support only - human verification required. Visual inspection cannot establish electrical functionality.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    state = st.session_state
 
     try:
         asset_type, inspection_stage, reported_symptom = _load_sidebar_inputs()
+        display_config = load_config(require_api_key=False)
+        initialize_operator_pcb4_workflow(state, display_config.max_upload_bytes)
     except (ConfigError, ImageValidationError) as exc:
         st.error(str(exc))
         asset_type = inspection_stage = reported_symptom = ""
+        display_config = None
 
-    state = st.session_state
     result = state.result if result_matches_current_images(state) else None
     can_run = bool(state.reference_image and state.inspection_image)
+    render_brand_header(
+        "Operator Mode",
+        model=getattr(display_config, "model", None),
+        item_id=state.item_identifier or None,
+        system_status="Inspecting" if state.inspection_running else "System Ready",
+    )
+    st.caption(
+        "Decision support only - human verification required. Visual inspection cannot establish electrical functionality."
+    )
+    if result is not None:
+        timing = result.timing
+        render_performance_bar(
+            timing.parallel_stage_latency_seconds,
+            timing.verifier_latency_seconds,
+            timing.total_workflow_latency_seconds,
+            timing.estimated_sequential_specialist_latency_seconds,
+            timing.calculated_parallel_speedup,
+            timing.successful_request_count,
+        )
 
-    left, right = st.columns([2, 1], gap="large")
+    left, right = st.columns([2, 1], gap="small")
     with left:
-        st.markdown("### Current inspection item")
+        render_panel_header("INSPECTION EVIDENCE", "Current inspection item")
         meta = []
         if state.item_identifier:
             meta.append(f"Item: {state.item_identifier}")
@@ -367,10 +393,15 @@ def render_operator_view() -> None:
             meta.append("Reference loaded")
         if state.current_queue_index:
             meta.append(f"Processed items: {state.current_queue_index}")
+        queue_position = pcb4_position_text(state)
+        if queue_position:
+            meta.append(queue_position)
         if meta:
             st.markdown(
                 '<div class="inspection-meta">'
-                + "".join(f'<span class="inspection-pill">{item}</span>' for item in meta)
+                + "".join(
+                    f'<span class="fs-chip">{html_escape(item)}</span>' for item in meta
+                )
                 + "</div>",
                 unsafe_allow_html=True,
             )
@@ -383,8 +414,13 @@ def render_operator_view() -> None:
             )
         else:
             st.info("Load an inspection image to begin.")
+        if state.get("pcb4_queue_error"):
+            st.warning(state.pcb4_queue_error)
+        elif state.get("pcb4_status_message"):
+            st.caption(state.pcb4_status_message)
 
     with right:
+        render_panel_header("DECISION PANEL", "Operator workflow")
         confidence = result.final_report.overall_confidence if result else None
         human_review = result.final_report.human_review_required if result else None
         status_text = result_status_text(result, state.inspection_running)
@@ -409,11 +445,14 @@ def render_operator_view() -> None:
         )
         render_priority_warnings(priority_warnings(result))
 
-        run_clicked, next_clicked, review_clicked = _render_actions(can_run)
+        previous_clicked, next_clicked, review_clicked = _render_actions()
         if review_clicked:
             st.info("Item marked for manual review in this session.")
-        if next_clicked:
-            next_item(state, keep_reference=True)
+        if previous_clicked and display_config is not None:
+            navigate_operator_pcb4(state, -1, display_config.max_upload_bytes)
+            st.rerun()
+        if next_clicked and display_config is not None:
+            navigate_operator_pcb4(state, 1, display_config.max_upload_bytes)
             st.rerun()
 
     if state.inspection_status == "failed":
@@ -424,11 +463,8 @@ def render_operator_view() -> None:
         with st.expander("Open technical details", expanded=False):
             st.write(state.get("operator_error", "No additional details available."))
 
-    should_run_now = run_clicked or should_auto_run(state)
-    if should_run_now and can_run:
-        _run_workflow(asset_type, inspection_stage, reported_symptom)
-        mark_result_for_current_images(state)
-        st.rerun()
+    if can_run:
+        _run_operator_inspection_if_needed(asset_type, inspection_stage, reported_symptom)
 
     _render_reference_expander()
 
@@ -441,5 +477,5 @@ def render_operator_view() -> None:
     with st.expander("Help", expanded=False):
         st.write(
             "Keyboard shortcuts are documented for workstation procedures, but this Streamlit MVP uses reliable button controls. "
-            "Use Run Inspection, Next Item, Open Expert View, and Mark for Review from the operator panel."
+            "Use Previous PCB Image, Next PCB Image, Open Expert View, and Mark for Review from the operator panel."
         )

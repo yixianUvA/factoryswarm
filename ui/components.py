@@ -7,17 +7,14 @@ import streamlit as st
 
 from core.orchestrator import WorkflowResult
 from core.schemas import InspectionDecision, ReportStatus, SpecialistReport
+from ui.formatters import decision_label
 from ui.state import DEFAULT_AGENT_STATUSES
+from ui.theme import (
+    render_decision_card,
+    render_performance_bar,
+    render_warning_list,
+)
 
-
-STATUS_STYLES = {
-    "PASS": ("ok", "✓"),
-    "MANUAL REVIEW": ("review", "!"),
-    "REWORK": ("rework", "↻"),
-    "REJECT": ("reject", "×"),
-    "INSPECTING": ("running", "…"),
-    "FAILED": ("failed", "!"),
-}
 
 AGENT_LABELS = {
     "Visual Difference Inspector": "Visual inspection",
@@ -28,16 +25,12 @@ AGENT_LABELS = {
 }
 
 
-def decision_text(decision: InspectionDecision) -> str:
-    return decision.value.replace("_", " ").upper()
-
-
 def result_status_text(result: WorkflowResult | None, inspection_running: bool = False) -> str:
     if inspection_running:
         return "INSPECTING"
     if result is None:
         return "INSPECTING"
-    return decision_text(result.final_report.decision)
+    return decision_label(result.final_report.decision)
 
 
 def concise_result_summary(result: WorkflowResult | None) -> str:
@@ -120,27 +113,13 @@ def render_status_card(
     human_review_required: bool | None,
     next_action: str,
 ) -> None:
-    style, icon = STATUS_STYLES.get(status_text, STATUS_STYLES["FAILED"])
-    confidence_text = "Pending" if confidence is None else f"{confidence:.0%}"
-    if human_review_required is None:
-        review_text = "Awaiting inspection result"
-    else:
-        review_text = (
-            "Human review required"
-            if human_review_required
-            else "Human review not required by report"
-        )
-    st.markdown(
-        f"""
-        <div class="operator-status operator-status-{style}">
-            <div class="operator-status-title"><span>{icon}</span>{status_text}</div>
-            <div class="operator-summary">{summary}</div>
-            <div class="operator-next-action">{next_action}</div>
-            <div class="operator-meta">Confidence: {confidence_text}</div>
-            <div class="operator-meta">{review_text}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    decision_key = status_text.lower().replace(" ", "_")
+    render_decision_card(
+        decision_key,
+        summary,
+        confidence,
+        human_review_required,
+        next_action,
     )
 
 
@@ -179,8 +158,7 @@ def render_priority_warnings(warnings: list[str]) -> None:
     if not warnings:
         return
     st.markdown("**Warnings**")
-    for warning in warnings:
-        st.markdown(f"- {warning}")
+    render_warning_list(warnings)
 
 
 def render_collapsible_report(result: WorkflowResult) -> None:
@@ -237,11 +215,14 @@ def render_specialist_report_details(reports: list[SpecialistReport]) -> None:
 def render_system_details(result: WorkflowResult) -> None:
     timing = result.timing
     with st.expander("System details", expanded=False):
-        cols = st.columns(4)
-        cols[0].metric("Parallel stage", f"{timing.parallel_stage_latency_seconds:.2f}s")
-        cols[1].metric("Verifier", f"{timing.verifier_latency_seconds:.2f}s")
-        cols[2].metric("Total", f"{timing.total_workflow_latency_seconds:.2f}s")
-        cols[3].metric("Estimated speedup", f"{timing.calculated_parallel_speedup:.2f}x")
+        render_performance_bar(
+            timing.parallel_stage_latency_seconds,
+            timing.verifier_latency_seconds,
+            timing.total_workflow_latency_seconds,
+            timing.estimated_sequential_specialist_latency_seconds,
+            timing.calculated_parallel_speedup,
+            timing.successful_request_count,
+        )
         st.caption("Sequential latency and speedup are estimates from per-agent timings.")
         st.table(
             {

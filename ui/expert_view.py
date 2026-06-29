@@ -17,6 +17,34 @@ from core.image_utils import (
 from core.orchestrator import WorkflowResult, run_inspection_workflow
 from core.sample_cases import load_builtin_pcb_sample
 from core.schemas import InspectionDecision, ReportStatus
+from ui.components import workflow_result_json
+from ui.dataset_queue import (
+    cancel_pcb4_pending_autorun,
+    current_pcb4_item,
+    load_next_pcb4_image,
+    pcb4_button_disabled,
+    pcb4_button_label,
+    pcb4_position_text,
+)
+from ui.formatters import decision_label as format_decision_label
+from ui.state import (
+    current_pcb4_fingerprint,
+    finish_pcb4_autorun,
+    mark_result_for_current_images,
+    set_completed_state,
+    set_failed_state,
+    set_running_state,
+    should_run_pcb4_autorun,
+)
+from ui.theme import (
+    inject_global_theme,
+    render_agent_card,
+    render_brand_header,
+    render_console,
+    render_decision_card,
+    render_panel_header,
+    render_performance_bar,
+)
 
 
 SAMPLE_REFERENCE = PROJECT_ROOT / "sample_cases" / "reference.jpg"
@@ -43,7 +71,7 @@ def run_async(coro):
 
 
 def decision_label(decision: InspectionDecision) -> str:
-    return decision.value.replace("_", " ").upper()
+    return format_decision_label(decision)
 
 
 def display_items(items: list[Any] | tuple[Any, ...] | None) -> list[str]:
@@ -71,31 +99,19 @@ def render_status_cards(statuses: dict[str, str]) -> None:
     for index, agent_name in enumerate(AGENT_ORDER):
         status = statuses.get(agent_name, "waiting")
         with cols[index]:
-            st.markdown(
-                f"""
-                <div class="agent-card status-{status}">
-                    <div class="agent-name">{agent_name}</div>
-                    <div class="agent-status">{status.upper()}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            render_agent_card(index + 1, agent_name, status)
 
 
 def render_final_report(result: WorkflowResult) -> None:
     report = result.final_report
-    decision = decision_label(report.decision)
-    st.subheader("Final Consensus")
-    st.markdown(
-        f"""
-        <div class="decision decision-{report.decision.value}">
-            <span>{decision}</span>
-            <small>Confidence {report.overall_confidence:.0%}</small>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    render_panel_header("FINAL CONSENSUS", report.incident_title)
+    render_decision_card(
+        report.decision,
+        report.decision_rationale,
+        report.overall_confidence,
+        report.human_review_required,
+        report.immediate_actions[0] if report.immediate_actions else "Review final report.",
     )
-    st.write(report.decision_rationale)
 
     if report.failed_agents:
         st.warning(
@@ -120,12 +136,15 @@ def render_final_report(result: WorkflowResult) -> None:
 
 def render_performance(result: WorkflowResult) -> None:
     timing = result.timing
-    st.subheader("Performance")
-    cols = st.columns(4)
-    cols[0].metric("Parallel Stage", f"{timing.parallel_stage_latency_seconds:.2f}s")
-    cols[1].metric("Verifier", f"{timing.verifier_latency_seconds:.2f}s")
-    cols[2].metric("Total", f"{timing.total_workflow_latency_seconds:.2f}s")
-    cols[3].metric("Estimated Speedup", f"{timing.calculated_parallel_speedup:.2f}x")
+    render_panel_header("SYSTEM PERFORMANCE", "Measured workflow timing")
+    render_performance_bar(
+        timing.parallel_stage_latency_seconds,
+        timing.verifier_latency_seconds,
+        timing.total_workflow_latency_seconds,
+        timing.estimated_sequential_specialist_latency_seconds,
+        timing.calculated_parallel_speedup,
+        timing.successful_request_count,
+    )
 
     st.caption("Sequential latency and speedup are estimates from per-agent timings.")
     st.table(
@@ -159,71 +178,7 @@ def render_specialist_reports(result: WorkflowResult) -> None:
 
 
 def render_expert_view() -> None:
-    st.markdown(
-        """
-        <style>
-        .block-container { padding-top: 1.5rem; }
-        .notice { border-left: 4px solid #b45309; padding: .6rem .8rem; background: #fff7ed; color: #7c2d12; }
-        .agent-card { border: 1px solid #d4d4d8; border-radius: 8px; padding: .8rem; min-height: 92px; background: #fafafa; }
-        .agent-name { font-weight: 650; line-height: 1.2; min-height: 42px; }
-        .agent-status { margin-top: .4rem; font-size: .78rem; font-weight: 700; letter-spacing: 0; }
-        .status-waiting { border-color: #d4d4d8; }
-        .status-running { border-color: #2563eb; background: #eff6ff; }
-        .status-completed { border-color: #16a34a; background: #f0fdf4; }
-        .status-failed { border-color: #dc2626; background: #fef2f2; }
-        .decision { border-radius: 8px; padding: .9rem 1rem; margin: .5rem 0 1rem; display: flex; align-items: center; justify-content: space-between; }
-        .decision span { font-size: 1.6rem; font-weight: 800; letter-spacing: 0; }
-        .decision small { font-size: 1rem; }
-        .decision-pass { background: #dcfce7; color: #14532d; }
-        .decision-manual_review { background: #fef3c7; color: #78350f; }
-        .decision-rework { background: #ffedd5; color: #7c2d12; }
-        .decision-reject { background: #fee2e2; color: #7f1d1d; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.title("FactorySwarm")
-
-    # Provider selector — loads the matching .env.<provider> file before config is read.
-    _PROVIDER_OPTIONS = ["cerebras", "google"]
-    _PROVIDER_LABELS = {"cerebras": "Cerebras · gemma-4-31b", "google": "Google AI · gemma-4-31b-it"}
-    st.session_state.setdefault("active_provider", "cerebras")
-
-    selected_provider = st.radio(
-        "AI provider",
-        options=_PROVIDER_OPTIONS,
-        format_func=lambda p: _PROVIDER_LABELS[p],
-        index=_PROVIDER_OPTIONS.index(st.session_state.active_provider),
-        horizontal=True,
-        label_visibility="collapsed",
-    )
-    if selected_provider != st.session_state.active_provider:
-        st.session_state.active_provider = selected_provider
-        st.session_state.result = None
-        reset_client()
-
-    _provider_env = PROJECT_ROOT / f".env.{selected_provider}"
-    if _provider_env.exists():
-        load_dotenv(_provider_env, override=True)
-
-    try:
-        display_config = load_config(require_api_key=False)
-    except ConfigError as exc:
-        st.error(str(exc))
-        return
-
-    st.caption(
-        f"Multimodal specialist agents for fast manufacturing inspection — "
-        f"provider: **{display_config.provider}** · model: **{display_config.model}**"
-    )
-
-    st.markdown(
-        '<div class="notice">Decision support only - human verification required. '
-        "Visual inspection cannot establish electrical functionality.</div>",
-        unsafe_allow_html=True,
-    )
-
+    inject_global_theme()
     try:
         display_config = load_config(require_api_key=False)
     except ConfigError as exc:
@@ -242,33 +197,54 @@ def render_expert_view() -> None:
     }.items():
         st.session_state.setdefault(key, default)
 
-    st.subheader("Inputs")
-    sample_col, _ = st.columns([1, 3])
-    with sample_col:
-        if st.button("Load Sample Case", use_container_width=True):
-            st.session_state.use_sample = True
-            st.session_state.show_mask = False
+    st.sidebar.markdown("### INSPECTION TARGET")
+    if st.sidebar.button("Load Sample Case", width="stretch"):
+        st.session_state.use_sample = True
+        st.session_state.show_mask = False
+        st.session_state.pcb4_current_item = None
+        cancel_pcb4_pending_autorun(st.session_state)
 
-    col_ref, col_ins = st.columns(2)
-    with col_ref:
-        reference_upload = st.file_uploader(
-            "Golden-reference image",
-            type=["jpg", "jpeg", "png"],
-            key="reference_upload",
+    if st.sidebar.button(
+        pcb4_button_label(st.session_state),
+        disabled=pcb4_button_disabled(st.session_state),
+        width="stretch",
+    ):
+        load_next_pcb4_image(st.session_state, display_config.max_upload_bytes)
+
+    st.sidebar.markdown("### REFERENCE CONFIGURATION")
+    reference_upload = st.sidebar.file_uploader(
+        "Golden-reference image",
+        type=["jpg", "jpeg", "png"],
+        key="reference_upload",
+    )
+    inspection_upload = st.sidebar.file_uploader(
+        "Inspection image",
+        type=["jpg", "jpeg", "png"],
+        key="inspection_upload",
+    )
+
+    st.sidebar.markdown("### FACTORY CONTEXT")
+    asset_type = st.sidebar.text_input("Asset type")
+    inspection_stage = st.sidebar.text_input("Inspection stage")
+    reported_symptom = st.sidebar.text_input("Reported symptom")
+
+    st.sidebar.markdown("### OPTIONAL EVIDENCE")
+    with st.sidebar.expander("Corresponding ROI crops", expanded=False):
+        st.caption(
+            "Provide both crops together. They must show corresponding local regions; masks remain separate evaluation metadata."
         )
-    with col_ins:
-        inspection_upload = st.file_uploader(
-            "Inspection image",
+        reference_roi_upload = st.file_uploader(
+            "Golden-reference ROI crop",
             type=["jpg", "jpeg", "png"],
-            key="inspection_upload",
+            key="reference_roi_upload",
+        )
+        inspection_roi_upload = st.file_uploader(
+            "Inspection ROI crop",
+            type=["jpg", "jpeg", "png"],
+            key="inspection_roi_upload",
         )
 
-    context_col_a, context_col_b, context_col_c = st.columns(3)
-    asset_type = context_col_a.text_input("Asset type")
-    inspection_stage = context_col_b.text_input("Inspection stage")
-    reported_symptom = context_col_c.text_input("Reported symptom")
-
-    mask_upload = st.file_uploader(
+    mask_upload = st.sidebar.file_uploader(
         "Dataset annotation mask",
         type=["jpg", "jpeg", "png"],
         key="mask_upload",
@@ -285,6 +261,8 @@ def render_expert_view() -> None:
             st.session_state.use_sample = False
             st.session_state.reference_roi_image = None
             st.session_state.inspection_roi_image = None
+            st.session_state.pcb4_current_item = None
+            cancel_pcb4_pending_autorun(st.session_state)
         elif st.session_state.use_sample:
             sample = load_builtin_pcb_sample(display_config.max_upload_bytes)
             st.session_state.reference_image = sample.image_set.reference
@@ -302,30 +280,14 @@ def render_expert_view() -> None:
             st.session_state.use_sample = False
             st.session_state.reference_roi_image = None
             st.session_state.inspection_roi_image = None
+            st.session_state.pcb4_current_item = None
+            cancel_pcb4_pending_autorun(st.session_state)
         elif st.session_state.use_sample and not sample_loaded:
             st.session_state.inspection_image = load_image_from_path(
                 SAMPLE_INSPECTION,
                 "Inspection",
                 display_config.max_upload_bytes,
             )
-
-        with st.expander("Optional corresponding ROI crops", expanded=False):
-            st.caption(
-                "Provide both crops together. They must show corresponding local regions; masks remain separate evaluation metadata."
-            )
-            roi_ref_col, roi_ins_col = st.columns(2)
-            with roi_ref_col:
-                reference_roi_upload = st.file_uploader(
-                    "Golden-reference ROI crop",
-                    type=["jpg", "jpeg", "png"],
-                    key="reference_roi_upload",
-                )
-            with roi_ins_col:
-                inspection_roi_upload = st.file_uploader(
-                    "Inspection ROI crop",
-                    type=["jpg", "jpeg", "png"],
-                    key="inspection_roi_upload",
-                )
 
         if reference_roi_upload is not None:
             st.session_state.reference_roi_image = validate_uploaded_image(
@@ -368,42 +330,157 @@ def render_expert_view() -> None:
     except ImageValidationError as exc:
         st.error(str(exc))
 
-    if st.session_state.reference_image and st.session_state.inspection_image:
-        st.subheader("Images")
-        img_col_a, img_col_b = st.columns(2)
-        img_col_a.image(
-            st.session_state.reference_image.image,
-            caption="Image 1: Golden Reference",
-            use_container_width=True,
-        )
-        img_col_b.image(
-            st.session_state.inspection_image.image,
-            caption="Image 2: Inspected Product",
-            use_container_width=True,
+    render_brand_header(
+        "Expert Mode",
+        model=display_config.model,
+        item_id=st.session_state.get("item_identifier") or None,
+        system_status="System Ready",
+    )
+    st.caption(
+        "Decision support only - human verification required. Visual inspection cannot establish electrical functionality."
+    )
+    if st.session_state.get("pcb4_queue_error"):
+        st.warning(st.session_state.pcb4_queue_error)
+    else:
+        queue_position = pcb4_position_text(st.session_state)
+        if queue_position:
+            st.caption(queue_position)
+        if st.session_state.get("pcb4_status_message"):
+            st.caption(st.session_state.pcb4_status_message)
+
+    result = st.session_state.result
+    if result is None:
+        render_performance_bar(None, None, None, None, None, None)
+    else:
+        timing = result.timing
+        render_performance_bar(
+            timing.parallel_stage_latency_seconds,
+            timing.verifier_latency_seconds,
+            timing.total_workflow_latency_seconds,
+            timing.estimated_sequential_specialist_latency_seconds,
+            timing.calculated_parallel_speedup,
+            timing.successful_request_count,
         )
 
-        if SAMPLE_OVERLAY.exists() and st.session_state.use_sample:
-            with st.expander("Classical difference overlay", expanded=False):
-                st.image(str(SAMPLE_OVERLAY), caption="Alignment and lighting can create artifacts.")
+    evidence_col, activity_col = st.columns([2, 1], gap="small")
+    with evidence_col:
+        render_panel_header("EVIDENCE WORKSPACE", "Reference, inspection, ROI, annotation")
+        tabs = st.tabs(["Inspection", "Reference", "Side-by-side", "ROI", "Annotation"])
+        with tabs[0]:
+            if st.session_state.inspection_image:
+                st.image(
+                    st.session_state.inspection_image.image,
+                    caption="Image 2: Inspected Product",
+                    width="stretch",
+                )
+            else:
+                st.info("Load an inspection image to begin.")
+        with tabs[1]:
+            if st.session_state.reference_image:
+                st.image(
+                    st.session_state.reference_image.image,
+                    caption="Image 1: Golden Reference",
+                    width="stretch",
+                )
+            else:
+                st.info("No golden reference loaded.")
+        with tabs[2]:
+            if st.session_state.reference_image and st.session_state.inspection_image:
+                img_col_a, img_col_b = st.columns(2)
+                img_col_a.image(
+                    st.session_state.reference_image.image,
+                    caption="Image 1: Golden Reference",
+                    width="stretch",
+                )
+                img_col_b.image(
+                    st.session_state.inspection_image.image,
+                    caption="Image 2: Inspected Product",
+                    width="stretch",
+                )
+                if SAMPLE_OVERLAY.exists() and st.session_state.use_sample:
+                    st.caption(
+                        "Classical difference overlay: alignment and lighting can create artifacts."
+                    )
+                    st.image(str(SAMPLE_OVERLAY), caption="Visual aid only", width="stretch")
+            else:
+                st.info("Load both full images for side-by-side comparison.")
+        with tabs[3]:
+            if st.session_state.reference_roi_image and st.session_state.inspection_roi_image:
+                st.caption(
+                    "These crops show corresponding local regions. They provide local evidence while the full images provide global layout context."
+                )
+                roi_col_a, roi_col_b = st.columns(2)
+                roi_col_a.image(
+                    st.session_state.reference_roi_image.image,
+                    caption="Image 3: Golden Reference ROI",
+                    width="stretch",
+                )
+                roi_col_b.image(
+                    st.session_state.inspection_roi_image.image,
+                    caption="Image 4: Inspection ROI",
+                    width="stretch",
+                )
+            else:
+                st.info("Optional ROI crops are not loaded.")
+        with tabs[4]:
+            if st.session_state.mask_image is not None and st.session_state.inspection_image is not None:
+                st.caption("Dataset annotation metadata is not model input.")
+                if st.button("Reveal Dataset Annotation", key="expert_reveal_mask"):
+                    st.session_state.show_mask = True
+                if st.session_state.show_mask:
+                    try:
+                        overlay = create_mask_overlay(
+                            st.session_state.inspection_image.image,
+                            st.session_state.mask_image.image,
+                        )
+                        st.image(
+                            overlay,
+                            caption="Annotation overlay on inspected product",
+                            width="stretch",
+                        )
+                    except ImageValidationError as exc:
+                        st.warning(str(exc))
+            else:
+                st.info("No annotation mask loaded.")
 
-    if st.session_state.reference_roi_image and st.session_state.inspection_roi_image:
-        st.subheader("Corresponding ROI Crops")
-        st.caption(
-            "These crops show corresponding local regions. They provide local evidence while the full images provide global layout context."
-        )
-        roi_col_a, roi_col_b = st.columns(2)
-        roi_col_a.image(
-            st.session_state.reference_roi_image.image,
-            caption="Image 3: Golden Reference ROI",
-            use_container_width=True,
-        )
-        roi_col_b.image(
-            st.session_state.inspection_roi_image.image,
-            caption="Image 4: Inspection ROI",
-            use_container_width=True,
+    with activity_col:
+        render_panel_header("INSPECTION ACTIVITY", "Execution console")
+        if result is None:
+            render_console(
+                [
+                    ("Pipeline Waiting", "Load evidence and run inspection."),
+                    ("Verifier Waiting", "No final decision has been requested."),
+                ]
+            )
+        else:
+            entries = [
+                (
+                    f"{report.agent_name} {'Failed' if report.status == ReportStatus.FAILED else 'Complete'}",
+                    report.error_message or report.summary,
+                )
+                for report in result.specialist_reports
+            ]
+            entries.append(("Verifier Complete", result.final_report.decision_rationale))
+            render_console(entries)
+
+    st.sidebar.markdown("### EXECUTION")
+    can_run = bool(st.session_state.reference_image and st.session_state.inspection_image)
+    run_clicked = st.sidebar.button(
+        "Run Inspection",
+        disabled=not can_run,
+        type="primary",
+        width="stretch",
+    )
+    if st.session_state.result is not None:
+        st.sidebar.download_button(
+            "Download Report JSON",
+            workflow_result_json(st.session_state.result),
+            file_name="factoryswarm_report.json",
+            mime="application/json",
+            width="stretch",
         )
 
-    st.subheader("Agent Execution")
+    st.subheader("Agent Orchestration")
     status_placeholder = st.empty()
     with status_placeholder.container():
         if st.session_state.result is None:
@@ -418,10 +495,16 @@ def render_expert_view() -> None:
                 }
             )
 
-    can_run = bool(st.session_state.reference_image and st.session_state.inspection_image)
-    if st.button("Run Inspection", disabled=not can_run, type="primary"):
+    pcb4_autorun_fingerprint = None
+    pcb4_autorun_requested = should_run_pcb4_autorun(st.session_state)
+    if pcb4_autorun_requested:
+        pcb4_autorun_fingerprint = current_pcb4_fingerprint(st.session_state)
+
+    should_run_now = run_clicked or pcb4_autorun_requested
+    if should_run_now:
         try:
             load_config(require_api_key=True)
+            set_running_state(st.session_state)
             running_statuses = {agent: "running" for agent in AGENT_ORDER}
             with status_placeholder.container():
                 render_status_cards(running_statuses)
@@ -437,10 +520,21 @@ def render_expert_view() -> None:
                         reported_symptom=reported_symptom or None,
                     )
                 )
+            set_completed_state(
+                st.session_state,
+                st.session_state.result.final_report.failed_agents,
+            )
+            mark_result_for_current_images(st.session_state)
         except (ConfigError, ImageValidationError) as exc:
+            set_failed_state(st.session_state)
             st.error(str(exc))
         except Exception as exc:
+            set_failed_state(st.session_state)
             st.error(f"Inspection could not complete safely: {exc.__class__.__name__}")
+        finally:
+            if pcb4_autorun_requested:
+                finish_pcb4_autorun(st.session_state, pcb4_autorun_fingerprint)
+        st.rerun()
 
     result = st.session_state.result
     if result is not None:
@@ -453,24 +547,12 @@ def render_expert_view() -> None:
                     for report in result.specialist_reports
                 }
             )
+        st.divider()
         render_final_report(result)
-        render_specialist_reports(result)
-        render_performance(result)
-
-    if st.session_state.mask_image is not None and st.session_state.inspection_image is not None:
-        st.subheader("Annotation")
-        st.caption("Dataset annotation metadata is not model input.")
-        if st.button("Reveal Dataset Annotation"):
-            st.session_state.show_mask = True
-        if st.session_state.show_mask:
-            try:
-                overlay = create_mask_overlay(
-                    st.session_state.inspection_image.image,
-                    st.session_state.mask_image.image,
-                )
-                st.image(overlay, caption="Annotation overlay on inspected product")
-            except ImageValidationError as exc:
-                st.warning(str(exc))
+        with st.expander("Specialist Reports", expanded=False):
+            render_specialist_reports(result)
+        with st.expander("System Performance", expanded=False):
+            render_performance(result)
 
 
 def main() -> None:

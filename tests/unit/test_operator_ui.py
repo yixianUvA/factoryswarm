@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html.parser import HTMLParser
 from types import SimpleNamespace
 
 from streamlit.testing.v1 import AppTest
@@ -19,6 +20,7 @@ from ui.components import (
     priority_warnings,
     result_status_text,
 )
+from ui.formatters import html_escape
 from ui.state import (
     DEFAULT_AGENT_STATUSES,
     OPERATOR_MODE,
@@ -30,6 +32,32 @@ from ui.state import (
     set_completed_state,
     should_auto_run,
 )
+from ui.theme import build_brand_header_html, render_console_entry
+
+
+class HeaderParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stack: list[str] = []
+        self.root_div_classes: list[str] = []
+        self.div_opens = 0
+        self.div_closes = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "div":
+            return
+        attrs_dict = dict(attrs)
+        if not self.stack:
+            self.root_div_classes.append(attrs_dict.get("class", ""))
+        self.stack.append(tag)
+        self.div_opens += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag != "div":
+            return
+        assert self.stack, "closing div without opening div"
+        self.stack.pop()
+        self.div_closes += 1
 
 
 def fake_image(data_uri: str = "data:image/png;base64,abc"):
@@ -189,6 +217,8 @@ def test_failed_agent_is_visible_in_compact_rows() -> None:
 
 def test_open_expert_view_button_switches_without_session_state_error() -> None:
     app = AppTest.from_file("app.py")
+    app.session_state["operator_mode_initialized"] = True
+    app.session_state["operator_needs_inspection"] = False
     app.run(timeout=10)
 
     open_expert = next(
@@ -198,3 +228,34 @@ def test_open_expert_view_button_switches_without_session_state_error() -> None:
 
     assert len(app.exception) == 0
     assert app.sidebar.radio[0].value == "Expert Mode"
+
+
+def test_theme_helpers_escape_dynamic_html() -> None:
+    unsafe = '<script>alert("x")</script>'
+
+    assert html_escape(unsafe) == "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;"
+    rendered = render_console_entry("Agent", unsafe)
+    assert unsafe not in rendered
+    assert "&lt;script&gt;" in rendered
+
+
+def test_brand_header_markup_is_balanced_and_escaped() -> None:
+    for mode in ("Operator Mode", "Expert Mode"):
+        header = build_brand_header_html(
+            mode=mode,
+            model='<model>',
+            item_id='item <42>',
+            system_status='<ready>',
+        )
+        parser = HeaderParser()
+        parser.feed(header)
+
+        assert header.strip() != "</div>"
+        assert "&lt;/div&gt;" not in header
+        assert mode in header
+        assert "&lt;model&gt;" in header
+        assert "item &lt;42&gt;" in header
+        assert "&lt;ready&gt;" in header
+        assert parser.root_div_classes == ["fs-header"]
+        assert parser.div_opens == parser.div_closes
+        assert parser.stack == []
