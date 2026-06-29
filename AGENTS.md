@@ -10,4 +10,8 @@
 - Do not treat OpenCV difference heatmaps or dataset masks as ground truth. Masks are evaluation metadata unless the user explicitly reveals them in the UI.
 - Do not add unnecessary dependencies or large tooling during hackathon work.
 - Update `README.md` when setup, runtime behavior, testing, or safety limitations change.
+- Preserve both Streamlit UI modes: Operator Mode is the default high-throughput interface, and Expert Mode keeps the detailed debugging/research workflow.
+- Do not expose full specialist reports, policy notes, timing details, or reference imagery by default in Operator Mode; keep those behind explicit expanders.
+- Maintain the Operator Mode session-state contract: Next Item clears stale inspection results while preserving the batch reference, and auto-run must not repeat API calls for the same image pair.
+- Run UI changes through offline tests; ordinary pytest must still avoid network calls.
 - Report changed files, verification commands, and remaining risks at the end of coding sessions.
