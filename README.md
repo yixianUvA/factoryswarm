@@ -59,19 +59,40 @@ FactorySwarm opens in **Operator Mode** by default. Use the small sidebar interf
 
 Use **Load Sample Case** for `sample_cases/reference.jpg` and `sample_cases/inspection.jpg`; the sample config also defines corresponding central-IC ROI crops used as local visual evidence. You may upload JPEG/PNG full images and optional paired ROI crops. Optional annotation masks are not sent to agents and are only shown after **Reveal Dataset Annotation**.
 
+## Visual System
+
+FactorySwarm uses a shared dark scientific command-center design system across both modes. Theme tokens live in `ui/theme.py` and `.streamlit/config.toml`; reusable rendering helpers keep custom HTML centralized and escape dynamic model/user text before rendering.
+
+Design principles:
+
+- Very dark navy application chrome with elevated panels and thin blue-gray borders.
+- Neon teal/cyan accents for active pipeline state, with amber/orange/red decision colors.
+- Sans-serif text for workflow UI and monospace text for telemetry, timing, model, and console labels.
+- Real timing metrics only; estimated values are labeled as estimates.
+- Accessible status text and icons in addition to color.
+- Progressive disclosure in Operator Mode and higher information density in Expert Mode.
+
 ## Operator Mode
 
-Operator Mode is optimized for high-throughput QA work. The inspected product image is the primary visual, the golden reference stays loaded for batch use, and the result panel emphasizes the decision, confidence, human-review requirement, top warnings, and next action.
+Operator Mode is optimized for high-throughput QA work. The inspected product image is the primary visual inside a dark evidence viewer, the golden reference stays loaded for batch use, and the command panel emphasizes the decision, confidence, human-review requirement, top warnings, and next action.
 
 - **Run Inspection** starts the same four-specialist concurrent workflow used by Expert Mode.
 - **Next Item** clears the previous report, warnings, agent status, mask, and inspection image while preserving the current golden reference for batch inspection.
 - **Automatically inspect after image upload** is off by default and guarded so Streamlit reruns do not repeatedly call the API for the same image pair.
-- Reference, ROI comparison, annotation reveal, detailed findings, specialist reports, and system timing remain available in collapsed sections.
+- Reference, ROI comparison, annotation reveal, detailed findings, specialist reports, and system timing remain available in collapsed dark sections.
 - Keyboard shortcuts are documented as a workstation workflow target, but this Streamlit MVP keeps reliable button-first operation.
 
 ## Expert Mode
 
-Expert Mode preserves the detailed original interface for demos, development, and troubleshooting. It continues to show full input controls, side-by-side full images, optional ROI crops, mask reveal, specialist reports, verifier consensus, policy notes, and timing metrics.
+Expert Mode is the dense command-center workspace for demos, development, and troubleshooting. It continues to expose full input controls, side-by-side full images, optional ROI crops, mask reveal, specialist reports, verifier consensus, policy notes, and timing metrics. Inputs are grouped in the sidebar, while the main workspace shows pipeline telemetry, evidence tabs, agent orchestration, an activity console, and final consensus details.
+
+## Dark-Theme Accessibility
+
+- Decision states include text and symbols, not color alone.
+- Body text uses high-contrast navy/white/cyan combinations rather than low-contrast gray.
+- Buttons keep large click targets and visible labels.
+- Motion is restrained and respects reduced-motion preferences through CSS.
+- The layout is designed to wrap on common laptop widths without horizontal page scrolling.
 
 ## Recommended Factory Workflow
 

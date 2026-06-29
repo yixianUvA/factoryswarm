@@ -37,6 +37,13 @@ from ui.state import (
     set_running_state,
     should_auto_run,
 )
+from ui.formatters import html_escape
+from ui.theme import (
+    inject_global_theme,
+    render_brand_header,
+    render_panel_header,
+    render_performance_bar,
+)
 
 
 SAMPLE_OVERLAY = PROJECT_ROOT / "sample_cases" / "generated" / "difference_overlay.jpg"
@@ -87,52 +94,7 @@ def _run_workflow(
 
 
 def _render_operator_styles() -> None:
-    st.markdown(
-        """
-        <style>
-        .block-container { padding-top: 1rem; }
-        .operator-header {
-            display: flex; justify-content: space-between; align-items: baseline;
-            border-bottom: 1px solid #d4d4d8; padding-bottom: .55rem; margin-bottom: 1rem;
-        }
-        .operator-title { font-size: 1.55rem; font-weight: 800; color: #111827; }
-        .operator-mode { color: #52525b; font-size: .95rem; }
-        .operator-notice {
-            border-left: 4px solid #b45309; padding: .55rem .75rem;
-            background: #fff7ed; color: #7c2d12; margin-bottom: 1rem;
-        }
-        .inspection-meta {
-            display: flex; gap: .55rem; flex-wrap: wrap; margin: .2rem 0 .7rem;
-        }
-        .inspection-pill {
-            border: 1px solid #d4d4d8; background: #fafafa; border-radius: 6px;
-            padding: .25rem .45rem; color: #3f3f46; font-size: .9rem;
-        }
-        .operator-status {
-            border: 2px solid #d4d4d8; border-radius: 8px; padding: 1rem;
-            min-height: 310px; display: flex; flex-direction: column; gap: .7rem;
-        }
-        .operator-status-title {
-            display: flex; align-items: center; gap: .55rem;
-            font-size: 2rem; font-weight: 900; letter-spacing: 0;
-        }
-        .operator-summary { font-size: 1.08rem; line-height: 1.4; color: #18181b; }
-        .operator-next-action {
-            border-top: 1px solid rgba(0,0,0,.12); padding-top: .7rem;
-            font-weight: 750; color: #18181b;
-        }
-        .operator-meta { color: #3f3f46; font-weight: 650; }
-        .operator-status-ok { background: #dcfce7; color: #14532d; border-color: #16a34a; }
-        .operator-status-review { background: #fef3c7; color: #78350f; border-color: #d97706; }
-        .operator-status-rework { background: #ffedd5; color: #7c2d12; border-color: #ea580c; }
-        .operator-status-reject { background: #fee2e2; color: #7f1d1d; border-color: #dc2626; }
-        .operator-status-running { background: #eff6ff; color: #1e3a8a; border-color: #2563eb; }
-        .operator-status-failed { background: #fecaca; color: #7f1d1d; border-color: #991b1b; }
-        .stButton > button { min-height: 2.6rem; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    inject_global_theme()
 
 
 def _load_sidebar_inputs() -> tuple[str, str, str]:
@@ -332,32 +294,40 @@ def render_operator_view() -> None:
     initialize_ui_state(st.session_state)
     _render_operator_styles()
 
-    st.markdown(
-        """
-        <div class="operator-header">
-            <div class="operator-title">FactorySwarm</div>
-            <div class="operator-mode">Operator Mode</div>
-        </div>
-        <div class="operator-notice">
-            Decision support only - human verification required. Visual inspection cannot establish electrical functionality.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
     try:
         asset_type, inspection_stage, reported_symptom = _load_sidebar_inputs()
+        display_config = load_config(require_api_key=False)
     except (ConfigError, ImageValidationError) as exc:
         st.error(str(exc))
         asset_type = inspection_stage = reported_symptom = ""
+        display_config = None
 
     state = st.session_state
     result = state.result if result_matches_current_images(state) else None
     can_run = bool(state.reference_image and state.inspection_image)
+    render_brand_header(
+        "Operator Mode",
+        model=getattr(display_config, "model", None),
+        item_id=state.item_identifier or None,
+        system_status="Inspecting" if state.inspection_running else "System Ready",
+    )
+    st.caption(
+        "Decision support only - human verification required. Visual inspection cannot establish electrical functionality."
+    )
+    if result is not None:
+        timing = result.timing
+        render_performance_bar(
+            timing.parallel_stage_latency_seconds,
+            timing.verifier_latency_seconds,
+            timing.total_workflow_latency_seconds,
+            timing.estimated_sequential_specialist_latency_seconds,
+            timing.calculated_parallel_speedup,
+            timing.successful_request_count,
+        )
 
-    left, right = st.columns([2, 1], gap="large")
+    left, right = st.columns([2, 1], gap="small")
     with left:
-        st.markdown("### Current inspection item")
+        render_panel_header("INSPECTION EVIDENCE", "Current inspection item")
         meta = []
         if state.item_identifier:
             meta.append(f"Item: {state.item_identifier}")
@@ -370,7 +340,9 @@ def render_operator_view() -> None:
         if meta:
             st.markdown(
                 '<div class="inspection-meta">'
-                + "".join(f'<span class="inspection-pill">{item}</span>' for item in meta)
+                + "".join(
+                    f'<span class="fs-chip">{html_escape(item)}</span>' for item in meta
+                )
                 + "</div>",
                 unsafe_allow_html=True,
             )
@@ -385,6 +357,7 @@ def render_operator_view() -> None:
             st.info("Load an inspection image to begin.")
 
     with right:
+        render_panel_header("DECISION PANEL", "Operator workflow")
         confidence = result.final_report.overall_confidence if result else None
         human_review = result.final_report.human_review_required if result else None
         status_text = result_status_text(result, state.inspection_running)

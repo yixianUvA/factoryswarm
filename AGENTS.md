@@ -11,7 +11,11 @@
 - Do not add unnecessary dependencies or large tooling during hackathon work.
 - Update `README.md` when setup, runtime behavior, testing, or safety limitations change.
 - Preserve both Streamlit UI modes: Operator Mode is the default high-throughput interface, and Expert Mode keeps the detailed debugging/research workflow.
+- Preserve the shared dark command-center visual system in `ui/theme.py`, `ui/formatters.py`, and `.streamlit/config.toml`; avoid duplicated inline CSS in individual views.
+- Escape dynamic text before rendering custom HTML. Do not inject uploaded filenames, user context, or model output into raw HTML without using the shared formatting helpers.
+- Do not alter backend behavior, prompts, verifier policy, API integration, concurrency, timing, or schemas for UI-only work.
 - Do not expose full specialist reports, policy notes, timing details, or reference imagery by default in Operator Mode; keep those behind explicit expanders.
 - Maintain the Operator Mode session-state contract: Next Item clears stale inspection results while preserving the batch reference, and auto-run must not repeat API calls for the same image pair.
+- Keep the UI responsive and accessible: visible text labels plus color, readable dark-theme contrast, no fake metrics, no distracting motion, and no horizontal-scroll layouts.
 - Run UI changes through offline tests; ordinary pytest must still avoid network calls.
 - Report changed files, verification commands, and remaining risks at the end of coding sessions.
