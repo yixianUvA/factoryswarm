@@ -55,7 +55,32 @@ Do not commit `.env`.
 conda run -n factoryswarm streamlit run app.py
 ```
 
+FactorySwarm opens in **Operator Mode** by default. Use the small sidebar interface selector to switch to **Expert Mode** when you need the full development and debugging interface.
+
 Use **Load Sample Case** for `sample_cases/reference.jpg` and `sample_cases/inspection.jpg`; the sample config also defines corresponding central-IC ROI crops used as local visual evidence. You may upload JPEG/PNG full images and optional paired ROI crops. Optional annotation masks are not sent to agents and are only shown after **Reveal Dataset Annotation**.
+
+## Operator Mode
+
+Operator Mode is optimized for high-throughput QA work. The inspected product image is the primary visual, the golden reference stays loaded for batch use, and the result panel emphasizes the decision, confidence, human-review requirement, top warnings, and next action.
+
+- **Run Inspection** starts the same four-specialist concurrent workflow used by Expert Mode.
+- **Next Item** clears the previous report, warnings, agent status, mask, and inspection image while preserving the current golden reference for batch inspection.
+- **Automatically inspect after image upload** is off by default and guarded so Streamlit reruns do not repeatedly call the API for the same image pair.
+- Reference, ROI comparison, annotation reveal, detailed findings, specialist reports, and system timing remain available in collapsed sections.
+- Keyboard shortcuts are documented as a workstation workflow target, but this Streamlit MVP keeps reliable button-first operation.
+
+## Expert Mode
+
+Expert Mode preserves the detailed original interface for demos, development, and troubleshooting. It continues to show full input controls, side-by-side full images, optional ROI crops, mask reveal, specialist reports, verifier consensus, policy notes, and timing metrics.
+
+## Recommended Factory Workflow
+
+1. Load or upload one golden reference for the current batch.
+2. Upload the current inspection image or load the sample case.
+3. Click **Run Inspection**, or enable auto-run for one inspection per new image pair.
+4. Act on PASS, MANUAL REVIEW, REWORK, or REJECT.
+5. Open collapsed details only when warnings or partial agent failures require it.
+6. Click **Next Item** to clear stale results and keep the batch reference ready.
 
 ## Tests
 
@@ -120,8 +145,8 @@ This repository includes VisA-style dataset assets under `data/` with `data/LICE
 ## 60-Second Demo Flow
 
 1. Start Streamlit and click **Load Sample Case**.
-2. Show the golden reference and inspection image side by side.
-3. Click **Run Inspection** and point out the four concurrent specialist agents.
-4. Review the final decision, confidence, observations, hypotheses, and actions.
-5. Open performance metrics and highlight estimated sequential latency versus parallel latency.
-6. Upload or reveal a mask only after explaining it is evaluation metadata, not model input.
+2. In Operator Mode, show that the inspection image is prominent and the reference is collapsed.
+3. Click **Run Inspection** and point out the compact specialist status rows.
+4. Review the decision, confidence, top warnings, and next action.
+5. Open **System details** to highlight estimated sequential latency versus parallel latency.
+6. Switch to **Expert Mode** to show the full report, ROI evidence, policy notes, and optional annotation reveal.
