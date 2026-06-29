@@ -188,7 +188,7 @@ def inject_global_theme() -> None:
             min-height: 76px;
             height: auto;
             padding: 0.85rem 1rem;
-            margin: 0 0 0.75rem;
+            margin: 2.3rem 0 1rem 0;
             overflow: visible;
             box-sizing: border-box;
             background: linear-gradient(135deg, rgba(12, 20, 38, .98), rgba(16, 27, 49, .90));
@@ -449,7 +449,7 @@ def build_brand_header_html(
     item_chip = (
         f'<span class="fs-chip">ITEM <strong>{html_escape(item_id)}</strong></span>'
         if item_id
-        else ""
+        else "<div>"
     )
     return f"""
         <div class="fs-header">
