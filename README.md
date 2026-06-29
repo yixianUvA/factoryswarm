@@ -8,6 +8,14 @@ FactorySwarm is decision support only. Human verification is required, and visua
 
 ## Architecture
 
+<p align="center">
+  <img
+    src="docs/assets/factorySwarm.png"
+    alt="FactorySwarm multi-agent workflow architecture"
+    width="100%"
+  />
+</p>
+
 ```mermaid
 flowchart TD
     UI[Streamlit app] --> Validate[Image validation and context]
